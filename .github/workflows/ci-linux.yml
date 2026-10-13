@@ -15,6 +15,9 @@ on:
       extra-cmake-parameters:
         required: true
         type: string
+      gate-mode:
+        required: true
+        type: string
 
 env:
   CTEST_OUTPUT_ON_FAILURE: 1
@@ -104,12 +107,9 @@ jobs:
         cmake --build . -j $(nproc)
         echo "::endgroup::"
 
-    - name: Test
+    - name: Test Gate
       run: |
-        (
-          cd build
-          ctest -j $(nproc) --timeout 120
-        )
+        ./scripts/gate.sh --mode "${{ inputs.gate-mode }}" build
 
         # Re-enable vcpkg.
         mv vcpkg-disabled.json vcpkg.json

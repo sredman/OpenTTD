@@ -29,15 +29,18 @@ jobs:
           compiler: clang
           cxxcompiler: clang++
           libraries: libsdl2-dev
+          gate-mode: graphical
         - name: GCC - SDL2
           compiler: gcc
           cxxcompiler: g++
           libraries: libsdl2-dev
+          gate-mode: graphical
         - name: GCC - Dedicated
           compiler: gcc
           cxxcompiler: g++
           libraries: grfcodec
           extra-cmake-parameters: -DOPTION_DEDICATED=ON -DCMAKE_CXX_FLAGS_INIT="-DRANDOM_DEBUG" -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+          gate-mode: dedicated
           # Compile without SDL / SDL2, as that should compile fine too.
 
     name: Linux (${{ matrix.name }})
@@ -50,6 +53,7 @@ jobs:
       cxxcompiler: ${{ matrix.cxxcompiler }}
       libraries: ${{ matrix.libraries }}
       extra-cmake-parameters: ${{ matrix.extra-cmake-parameters }}
+      gate-mode: ${{ matrix.gate-mode }}
 
   macos:
     strategy:

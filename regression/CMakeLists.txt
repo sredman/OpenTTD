@@ -19,8 +19,10 @@
     # Create a new target which runs the regression
     # Subdirectory targets will add themselves as dependencies
     add_custom_target(regression)
+    add_dependencies(regression regression_files)
 
     add_subdirectory(regression)
     add_subdirectory(stationlist)
     add_subdirectory(gs)
     add_subdirectory(gs_compat)
+    add_subdirectory(aircraft)

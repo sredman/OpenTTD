@@ -17,6 +17,9 @@ endif()
 if(NOT EXISTS ${SCRIPT_FOLDER}/${REGRESSION_TEST}/test.sav)
     message(FATAL_ERROR "Regression test ${REGRESSION_TEST} does not exist (tip: check regression folder for the correct spelling)")
 endif()
+if(NOT EXISTS regression/regression.cfg)
+    message(FATAL_ERROR "Regression configuration regression/regression.cfg does not exist (tip: ensure regression_files target ran)")
+endif()
 
 # If editbin is given, copy the executable to a new folder, and change the
 # subsystem to console. The copy is needed as multiple regressions can run

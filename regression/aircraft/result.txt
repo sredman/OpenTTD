@@ -1,0 +1,12 @@
+
+--AircraftRegression--
+ Ops:                 9990
+ InitialTick:         1
+ StepTick:            2
+ PlaneSpeedValid:     true
+ PlaneSpeedValue:     2
+ CivilianBaseline:    OK
+
+Done...
+
+ERROR: The script died unexpectedly.

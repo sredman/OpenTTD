@@ -41,6 +41,7 @@ jobs:
         echo "number=$(cat pr/number)" >> $GITHUB_OUTPUT
 
     - name: Publish preview
+      if: false # Disabled on fork: external Cloudflare preview publishing is disabled
       uses: cloudflare/wrangler-action@v4
       with:
         apiToken: ${{ secrets.PREVIEW_CLOUDFLARE_API_TOKEN }}

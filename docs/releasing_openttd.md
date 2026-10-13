@@ -38,17 +38,14 @@ This guide is for OpenTTD developers/maintainers, to release a new version of Op
 
 ## Step 3: Make the actual OpenTTD release
 
-1. Confirm that the version in `CMakeLists.txt` matches the intended release version.
-2. Go to https://github.com/OpenTTD/OpenTTD/releases/new and create a new tag matching the release number. For the body of the release, copy in the changelog. "Set as a pre-release" for a beta or RC.
-3. Wait for the OpenTTD release workflow to be complete.
-4. If this is a full release:
-   * for `Steam`: under Steamworks -> SteamPipe -> Builds, set the "testing" branch live on the "default" branch. This will request 2FA validation.
-   * for `GOG`: under Builds, "Publish" the freshly uploaded builds to `Master`, `GOG-use only` and `Testing`.
-   * for `Microsoft Store`: ask orudge to publish the new release.
+> [!NOTE]
+> For the OpenTTD-Wargame fork (`sredman/OpenTTD`), releases target [https://github.com/sredman/OpenTTD/releases](https://github.com/sredman/OpenTTD/releases).
+> External publishing to Steam, GOG, Microsoft Store, and upstream OpenTTD CDN is disabled on this fork. All release bundles attach directly to GitHub releases on `sredman/OpenTTD`.
 
-Access to `Steam`, `GOG` and/or `Microsoft Store` requires a developer account on that platform.
-You will need access to the shared keystore in order to create such an account.
-For help and/or access to either or both, please contact TrueBrain.
+1. Confirm that the version in `CMakeLists.txt` matches the intended release version.
+2. For the fork, create a new tag/release at https://github.com/sredman/OpenTTD/releases/new matching the release number. For the body of the release, copy in the changelog. "Set as a pre-release" for a beta or RC.
+3. Wait for the release workflow to complete.
+4. Upstream-only external store publishing (Steam, GOG, Microsoft Store) is not applicable to fork releases.
 
 ## Step 4: Tell the world
 

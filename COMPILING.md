@@ -82,20 +82,58 @@ Change `<location of vcpkg>` to where you have installed vcpkg. After this
 in the build folder are MSVC project files. MSVC can rebuild the project
 files himself via the `ZERO_CHECK` project.
 
-## All other platforms
-Minimum required version of CMake is 3.16.
-By default this produces a Debug build with assertations enabled.
-This is a far slower build than release builds.
+## Linux and macOS
+
+Minimum required version of CMake is 3.17. C++20 is required.
+
+### 1. Dedicated / Headless Build (minimal dependencies)
+Recommended for headless simulation, continuous integration, and test automation:
 
 ```bash
-mkdir build
-cd build
-cmake ..
-make
+mkdir -p build && cd build
+cmake .. -G Ninja -DOPTION_DEDICATED=ON
+ninja openttd
 ```
 
-For more information on how to use CMake (including how to make Release builds),
-we urge you to read [their excellent manual](https://cmake.org/cmake/help/latest/guide/user-interaction/index.html).
+### 2. Graphical Build (client GUI)
+Requires SDL2 (or Allegro) development libraries and OpenGL:
+
+```bash
+mkdir -p build-gui && cd build-gui
+cmake .. -G Ninja
+ninja openttd
+```
+
+If SDL2 is installed in a custom user prefix:
+```bash
+cmake .. -G Ninja -DCMAKE_PREFIX_PATH=<prefix>
+```
+
+### 3. Running Unit Tests
+Build and run the Catch2 test suite:
+
+```bash
+ninja openttd_test
+./openttd_test
+# Or via ctest:
+ctest --output-on-failure
+```
+
+### 4. Running Regression Tests
+Run the deterministic GameScript and AI regression suite:
+
+```bash
+ninja regression_files regression
+# Or run an individual regression target:
+ninja regression_aircraft
+```
+
+### 5. Running Headless Scenario Simulations
+Execute OpenTTD headless with bounded ticks and no audio/video:
+
+```bash
+./openttd -x -c regression/regression.cfg -g <save_or_scenario> -snull -mnull -vnull:ticks=<ticks> -d script=2 -Q
+```
 
 ## CMake Options
 
@@ -106,7 +144,7 @@ builds.
    significantly faster than a debug build, but has far less useful information
    in case of a crash.
 - `-DOPTION_DEDICATED=ON`: build OpenTTD without a GUI. Useful if you are
-   running a headless server, as it requires less libraries to operate.
+   running a headless server or test environment, as it requires fewer libraries.
 - `-DOPTION_USE_ASSERTS=OFF`: disable asserts. Use with care, as assert
    statements capture early signs of trouble. Release builds have them
    disabled by default.

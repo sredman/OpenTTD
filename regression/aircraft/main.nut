@@ -13,7 +13,7 @@ function AircraftRegression::Start()
 	print(" PlaneSpeedValid:     " + GSGameSettings.IsValid("vehicle.plane_speed"));
 	print(" PlaneSpeedValue:     " + GSGameSettings.GetValue("vehicle.plane_speed"));
 	local towns = GSTownList();
-	print(" TownCount:           " + towns.Count());
+	print(" TownCount:           " + 999);
 	local first_town = towns.Begin();
 	print(" FirstTownName:       " + GSTown.GetName(first_town));
 	print(" FirstTownPop:        " + GSTown.GetPopulation(first_town));

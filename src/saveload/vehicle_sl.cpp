@@ -531,6 +531,9 @@ void AfterLoadVehiclesPhase2(bool part_of_load)
 
 			case VehicleType::Disaster: {
 				auto *dv = DisasterVehicle::From(v);
+				if (dv->subtype == ST_MILITARY_AIRCRAFT || dv->subtype == ST_MILITARY_TARGET_MARKER || dv->subtype == ST_MILITARY_AIRCRAFT_SHADOW) {
+					dv->UpdateImage();
+				}
 				if (dv->subtype == ST_SMALL_UFO && dv->state != 0) {
 					RoadVehicle *u = RoadVehicle::GetIfValid(v->dest_tile.base());
 					if (u != nullptr && u->IsFrontEngine()) {

@@ -62,19 +62,65 @@ struct DisasterVehicle final : public SpecializedVehicle<DisasterVehicle, Vehicl
 
 	void UpdatePosition(int x, int y, int z);
 	void UpdateDeltaXY() override;
+	/** Update disaster vehicle sprite and apply side recolouring palettes for military units. */
 	void UpdateImage();
 	bool Tick() override;
 
+	/**
+	 * Get the military side affiliation of this unit.
+	 * @return Military side ID (e.g. 0 or 1).
+	 */
 	uint8_t GetMilitarySide() const { return GB(this->state, 8, 8); }
+
+	/**
+	 * Set the military side affiliation of this unit.
+	 * @param side Military side ID to set.
+	 */
 	void SetMilitarySide(uint8_t side) { SB(this->state, 8, 8, side); }
+
+	/**
+	 * Get the current military movement state.
+	 * @return Current #MilitaryMovementState.
+	 */
 	MilitaryMovementState GetMilitaryMovementState() const { return (MilitaryMovementState)GB(this->state, 0, 8); }
+
+	/**
+	 * Set the military movement state.
+	 * @param mms Movement state to assign.
+	 */
 	void SetMilitaryMovementState(MilitaryMovementState mms) { SB(this->state, 0, 8, (uint8_t)mms); }
 };
 
+/**
+ * Spawn an autonomous military aircraft and its associated shadow.
+ * @param x Initial X pixel coordinate.
+ * @param y Initial Y pixel coordinate.
+ * @param dir Initial heading direction.
+ * @param side Side affiliation ID.
+ * @return Pointer to spawned aircraft DisasterVehicle, or nullptr on allocation failure.
+ */
 DisasterVehicle *SpawnMilitaryAircraft(int x, int y, Direction dir, uint8_t side);
+
+/**
+ * Spawn a fixed military target marker.
+ * @param x Target marker X pixel coordinate.
+ * @param y Target marker Y pixel coordinate.
+ * @param side Side affiliation ID.
+ * @return Pointer to spawned marker DisasterVehicle, or nullptr on allocation failure.
+ */
 DisasterVehicle *SpawnMilitaryTargetMarker(int x, int y, uint8_t side);
+
+/**
+ * Find the nearest eligible enemy target marker for a military aircraft.
+ * @param aircraft The military aircraft seeking an eligible enemy marker.
+ * @return Pointer to the nearest eligible enemy marker, or nullptr if none found.
+ */
 DisasterVehicle *FindNearestEligibleEnemyMarker(const DisasterVehicle *aircraft);
-void SetupMilitaryScenario();
-void MaybeSetupMilitaryScenario();
+
+/**
+ * Initialize fixed military demonstration scenario if map dimensions are sufficient.
+ * @return True if scenario was initialized; false if map dimensions are too small.
+ */
+bool SetupMilitaryScenario();
 
 #endif /* DISASTER_VEHICLE_H */

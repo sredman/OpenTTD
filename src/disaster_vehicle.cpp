@@ -731,11 +731,7 @@ static bool DisasterTick_NULL([[maybe_unused]] DisasterVehicle *v)
 	return true;
 }
 
-/**
- * Find the nearest eligible enemy target marker for a military aircraft.
- * Eligible: ST_MILITARY_TARGET_MARKER, different military side, not crashed.
- * Deterministic tie-breaking: when distances are equal, selects lower VehicleID.
- */
+/* Find the nearest eligible enemy target marker for a military aircraft. */
 DisasterVehicle *FindNearestEligibleEnemyMarker(const DisasterVehicle *aircraft)
 {
 	uint8_t my_side = aircraft->GetMilitarySide();
@@ -787,34 +783,61 @@ static bool DisasterTick_MilitaryAircraft(DisasterVehicle *v)
 		target = FindNearestEligibleEnemyMarker(v);
 		if (target != nullptr) {
 			v->big_ufo_destroyer_target = target->index;
+			v->age = TimerGameCalendar::Date{0};
 			v->SetMilitaryMovementState(MMS_MOVING);
 		} else {
 			/* Bounded handling of no targets: idle in place */
 			v->big_ufo_destroyer_target = VehicleID::Invalid();
+			v->age = TimerGameCalendar::Date{0};
 			v->SetMilitaryMovementState(MMS_IDLE);
 			return true;
 		}
 	}
 
 	/* Bounded handling of arrival */
-	int dist_x = std::abs(target->x_pos - v->x_pos);
-	int dist_y = std::abs(target->y_pos - v->y_pos);
+	int dx = target->x_pos - v->x_pos;
+	int dy = target->y_pos - v->y_pos;
+	int dist_x = std::abs(dx);
+	int dist_y = std::abs(dy);
 	if (dist_x + dist_y <= 8) {
 		v->SetMilitaryMovementState(MMS_ARRIVED);
+		v->age = TimerGameCalendar::Date{0};
 		return true;
+	}
+
+	/* Small deterministic straight-line step */
+	int abs_dx = dist_x;
+	int abs_dy = dist_y;
+	int step_x = 0;
+	int step_y = 0;
+
+	if (abs_dx >= abs_dy) {
+		step_x = (dx > 0) ? 1 : (dx < 0 ? -1 : 0);
+		int err = v->age.base() + abs_dy;
+		if (err >= abs_dx) {
+			err -= abs_dx;
+			step_y = (dy > 0) ? 1 : (dy < 0 ? -1 : 0);
+		}
+		v->age = TimerGameCalendar::Date{err};
+	} else {
+		step_y = (dy > 0) ? 1 : (dy < 0 ? -1 : 0);
+		int err = v->age.base() + abs_dx;
+		if (err >= abs_dy) {
+			err -= abs_dy;
+			step_x = (dx > 0) ? 1 : (dx < 0 ? -1 : 0);
+		}
+		v->age = TimerGameCalendar::Date{err};
 	}
 
 	/* Turn towards the target */
 	v->direction = GetDirectionTowards(v, target->x_pos, target->y_pos);
 	v->SetMilitaryMovementState(MMS_MOVING);
 
-	GetNewVehiclePosResult gp = GetNewVehiclePos(v);
-
 	/* Bounded handling of map edges: clamp within map boundaries */
-	gp.x = Clamp(gp.x, 0, (int)(Map::MaxX() * TILE_SIZE));
-	gp.y = Clamp(gp.y, 0, (int)(Map::MaxY() * TILE_SIZE));
+	int new_x = Clamp(v->x_pos + step_x, 0, (int)(Map::MaxX() * TILE_SIZE));
+	int new_y = Clamp(v->y_pos + step_y, 0, (int)(Map::MaxY() * TILE_SIZE));
 
-	v->UpdatePosition(gp.x, gp.y, GetAircraftFlightLevel(v));
+	v->UpdatePosition(new_x, new_y, GetAircraftFlightLevel(v));
 
 	return true;
 }
@@ -1136,6 +1159,7 @@ void DisasterVehicle::UpdateDeltaXY()
 	this->bounds = {{-1, -1, 0}, {2, 2, 5}, {}};
 }
 
+/* Spawn an autonomous military aircraft. */
 DisasterVehicle *SpawnMilitaryAircraft(int x, int y, Direction dir, uint8_t side)
 {
 	if (!Vehicle::CanAllocateItem(2)) return nullptr;
@@ -1150,6 +1174,7 @@ DisasterVehicle *SpawnMilitaryAircraft(int x, int y, Direction dir, uint8_t side
 	return v;
 }
 
+/* Spawn a fixed military target marker. */
 DisasterVehicle *SpawnMilitaryTargetMarker(int x, int y, uint8_t side)
 {
 	if (!Vehicle::CanAllocateItem(1)) return nullptr;
@@ -1160,8 +1185,12 @@ DisasterVehicle *SpawnMilitaryTargetMarker(int x, int y, uint8_t side)
 	return v;
 }
 
-void SetupMilitaryScenario()
+/* Initialize fixed military demonstration scenario. */
+bool SetupMilitaryScenario()
 {
+	/* Refuse insufficient dimensions before changing the world. Minimum 256x256 required. */
+	if (Map::SizeX() < 256 || Map::SizeY() < 256) return false;
+
 	/* Remove existing military units/markers if any */
 	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
 		if (v->subtype == ST_MILITARY_AIRCRAFT ||
@@ -1171,13 +1200,9 @@ void SetupMilitaryScenario()
 		}
 	}
 
-	uint max_x = Map::MaxX() * TILE_SIZE;
-	uint max_y = Map::MaxY() * TILE_SIZE;
-	if (max_x < 100 * TILE_SIZE || max_y < 100 * TILE_SIZE) return;
-
 	/* Fixed fixture:
 	 * Friendly marker (Side 0) at (80, 100).
-	 * Nearest enemy marker (Side 1) at (140, 100) (straight line east).
+	 * Nearest enemy marker (Side 1) at (140, 100).
 	 * Farther enemy marker (Side 1) at (180, 120).
 	 * Aircraft on Side 0 starting at tile (100, 100) facing east.
 	 */
@@ -1186,18 +1211,5 @@ void SetupMilitaryScenario()
 	SpawnMilitaryTargetMarker(180 * TILE_SIZE, 120 * TILE_SIZE, 1);
 
 	SpawnMilitaryAircraft(100 * TILE_SIZE, 100 * TILE_SIZE, Direction::E, 0);
-}
-
-void MaybeSetupMilitaryScenario()
-{
-	bool has_military = false;
-	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
-		if (v->subtype == ST_MILITARY_AIRCRAFT || v->subtype == ST_MILITARY_TARGET_MARKER) {
-			has_military = true;
-			break;
-		}
-	}
-	if (!has_military && Map::SizeX() == 256 && Map::SizeY() == 256 && Town::GetNumItems() == 20) {
-		SetupMilitaryScenario();
-	}
+	return true;
 }

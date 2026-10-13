@@ -2961,7 +2961,10 @@ static bool ConDumpInfo(std::span<std::string_view> argv)
 /** Setup military scenario command. @copydoc IConsoleCmdProc */
 static bool ConSetupMilitaryScenario([[maybe_unused]] std::span<std::string_view> argv)
 {
-	SetupMilitaryScenario();
+	if (!SetupMilitaryScenario()) {
+		IConsolePrint(CC_DEFAULT, "Failed to initialize military scenario: map dimensions must be at least 256x256 tiles.");
+		return false;
+	}
 	IConsolePrint(CC_DEFAULT, "Military scenario initialized.");
 	return true;
 }

@@ -11,6 +11,7 @@
 #include "../3rdparty/catch2/catch.hpp"
 #include "../disaster_vehicle.h"
 #include "../map_func.h"
+#include "../saveload/saveload_internal.h"
 #include "mock_environment.h"
 
 #include "../safeguards.h"
@@ -47,43 +48,62 @@ TEST_CASE("MilitaryAircraft - Modeling, side affiliation, and civilian separatio
 	CHECK(marker->GetMilitarySide() == 1);
 }
 
-TEST_CASE("MilitaryAircraft - Straight line movement toward nearest eligible enemy marker")
+TEST_CASE("MilitaryAircraft - Straight line movement for off-axis targets")
 {
 	ResetTestEnvironment();
 
-	/* Aircraft on Side 0 at (100, 100) facing SW (+X axis in OpenTTD coords). */
+	/* Aircraft on Side 0 at (100, 100). */
 	DisasterVehicle *plane = SpawnMilitaryAircraft(100 * TILE_SIZE, 100 * TILE_SIZE, Direction::SW, 0);
 	REQUIRE(plane != nullptr);
 
-	/* Friendly marker on Side 0 at (80, 100): closer, but same side -> ineligible. */
-	DisasterVehicle *friendly = SpawnMilitaryTargetMarker(80 * TILE_SIZE, 100 * TILE_SIZE, 0);
-	REQUIRE(friendly != nullptr);
-
-	/* Nearest enemy marker on Side 1 at (140, 100) (+X direction, 40 tiles away). */
-	DisasterVehicle *enemy1 = SpawnMilitaryTargetMarker(140 * TILE_SIZE, 100 * TILE_SIZE, 1);
-	REQUIRE(enemy1 != nullptr);
-
-	/* Farther enemy marker on Side 1 at (180, 120). */
-	DisasterVehicle *enemy2 = SpawnMilitaryTargetMarker(180 * TILE_SIZE, 120 * TILE_SIZE, 1);
-	REQUIRE(enemy2 != nullptr);
-
-	/* First tick: aircraft searches for nearest eligible enemy marker. */
-	plane->Tick();
-	CHECK(plane->big_ufo_destroyer_target == enemy1->index);
-	CHECK(plane->GetMilitaryMovementState() == MMS_MOVING);
-	CHECK(plane->direction == Direction::SW);
+	/* Enemy target marker with unequal axis offset: +80 pixels in X, +20 pixels in Y. */
+	DisasterVehicle *enemy = SpawnMilitaryTargetMarker(100 * TILE_SIZE + 80, 100 * TILE_SIZE + 20, 1);
+	REQUIRE(enemy != nullptr);
 
 	int initial_x = plane->x_pos;
 	int initial_y = plane->y_pos;
 
-	/* Run 16 ticks: advances in pure straight line east (+X) towards enemy1. */
-	for (int i = 0; i < 16; i++) {
+	/* First tick: aircraft targets enemy marker, enters MMS_MOVING, and advances. */
+	plane->Tick();
+	CHECK(plane->big_ufo_destroyer_target == enemy->index);
+	CHECK(plane->GetMilitaryMovementState() == MMS_MOVING);
+
+	/* Run up to tick 20: along straight line segment (+80, +20), when dx = 20, dy = 5. */
+	for (int i = 1; i < 20; i++) {
 		plane->Tick();
 	}
+	CHECK(plane->x_pos == initial_x + 20);
+	CHECK(plane->y_pos == initial_y + 5);
 
-	CHECK(plane->x_pos > initial_x);
-	CHECK(plane->y_pos == initial_y);
-	CHECK(plane->big_ufo_destroyer_target == enemy1->index);
+	/* Run up to tick 40: when dx = 40, dy = 10. */
+	for (int i = 20; i < 40; i++) {
+		plane->Tick();
+	}
+	CHECK(plane->x_pos == initial_x + 40);
+	CHECK(plane->y_pos == initial_y + 10);
+
+	/* Run up to tick 60: when dx = 60, dy = 15. */
+	for (int i = 40; i < 60; i++) {
+		plane->Tick();
+	}
+	CHECK(plane->x_pos == initial_x + 60);
+	CHECK(plane->y_pos == initial_y + 15);
+
+	/* Continue ticking until arrival. */
+	for (int i = 60; i < 85; i++) {
+		plane->Tick();
+	}
+	CHECK(plane->GetMilitaryMovementState() == MMS_ARRIVED);
+
+	/* Equivalent continuation: additional ticks stay arrived without diverging. */
+	int arrive_x = plane->x_pos;
+	int arrive_y = plane->y_pos;
+	for (int i = 0; i < 20; i++) {
+		plane->Tick();
+	}
+	CHECK(plane->GetMilitaryMovementState() == MMS_ARRIVED);
+	CHECK(plane->x_pos == arrive_x);
+	CHECK(plane->y_pos == arrive_y);
 }
 
 TEST_CASE("MilitaryAircraft - Deterministic tie-breaking between equidistant enemy markers")
@@ -145,7 +165,7 @@ TEST_CASE("MilitaryAircraft - Bounded handling of arrival at target marker")
 	CHECK(plane->GetMilitaryMovementState() == MMS_ARRIVED);
 	CHECK(plane->big_ufo_destroyer_target == enemy->index);
 
-	/* Additional ticks keep the aircraft in arrived/idle state without runaway movement. */
+	/* Additional ticks keep the aircraft in arrived state without runaway movement. */
 	int arrive_x = plane->x_pos;
 	int arrive_y = plane->y_pos;
 	for (int i = 0; i < 10; i++) {
@@ -160,25 +180,54 @@ TEST_CASE("MilitaryAircraft - Bounded handling of map edges")
 {
 	ResetTestEnvironment();
 
-	/* Place aircraft at map boundary (0, 0) facing Northwest. */
-	DisasterVehicle *plane = SpawnMilitaryAircraft(0, 0, Direction::NW, 0);
+	/* Meaningful moving boundary case: aircraft placed at boundary x = 0. */
+	DisasterVehicle *plane = SpawnMilitaryAircraft(0, 50 * TILE_SIZE, Direction::S, 0);
 	REQUIRE(plane != nullptr);
 
-	/* Marker located outside map coordinates. */
-	DisasterVehicle *enemy = SpawnMilitaryTargetMarker(0, 0, 1);
+	/* Target marker along boundary at (0, 100 * TILE_SIZE) (50 tiles away, dist > 8). */
+	DisasterVehicle *enemy = SpawnMilitaryTargetMarker(0, 100 * TILE_SIZE, 1);
 	REQUIRE(enemy != nullptr);
-	plane->big_ufo_destroyer_target = enemy->index;
 
-	/* Force coordinates to 0, 0 and tick. */
-	plane->x_pos = 0;
-	plane->y_pos = 0;
-	plane->direction = Direction::NW;
+	int initial_y = plane->y_pos;
 
+	/* First tick: acquires target, moves along boundary. */
 	plane->Tick();
-	CHECK(plane->x_pos >= 0);
-	CHECK(plane->y_pos >= 0);
+	CHECK(plane->GetMilitaryMovementState() == MMS_MOVING);
+	CHECK(plane->x_pos == 0);
+	CHECK(plane->y_pos > initial_y);
+
+	/* Advance 30 ticks along the boundary. */
+	for (int i = 0; i < 30; i++) {
+		plane->Tick();
+	}
+
+	CHECK(plane->x_pos == 0);
+	CHECK(plane->y_pos == initial_y + 31);
+	CHECK(plane->GetMilitaryMovementState() == MMS_MOVING);
 	CHECK(plane->x_pos <= (int)(Map::MaxX() * TILE_SIZE));
 	CHECK(plane->y_pos <= (int)(Map::MaxY() * TILE_SIZE));
+
+	/* Upper boundary test: aircraft at Map::MaxX() * TILE_SIZE moving along boundary. */
+	int max_x = Map::MaxX() * TILE_SIZE;
+	DisasterVehicle *plane_max = SpawnMilitaryAircraft(max_x, 50 * TILE_SIZE, Direction::S, 0);
+	REQUIRE(plane_max != nullptr);
+
+	DisasterVehicle *enemy_max = SpawnMilitaryTargetMarker(max_x, 100 * TILE_SIZE, 1);
+	REQUIRE(enemy_max != nullptr);
+
+	int max_initial_y = plane_max->y_pos;
+	plane_max->Tick();
+	CHECK(plane_max->GetMilitaryMovementState() == MMS_MOVING);
+	CHECK(plane_max->x_pos == max_x);
+	CHECK(plane_max->y_pos > max_initial_y);
+
+	for (int i = 0; i < 30; i++) {
+		plane_max->Tick();
+	}
+	CHECK(plane_max->x_pos == max_x);
+	CHECK(plane_max->y_pos == max_initial_y + 31);
+	CHECK(plane_max->GetMilitaryMovementState() == MMS_MOVING);
+	CHECK(plane_max->y_pos <= (int)(Map::MaxY() * TILE_SIZE));
 }
 
 TEST_CASE("MilitaryAircraft - Bounded handling of removed targets")
@@ -300,11 +349,50 @@ TEST_CASE("MilitaryAircraft - Deterministic simulation & save/load persistence")
 	CHECK(loaded_plane->y_pos == total_100_y);
 }
 
+TEST_CASE("MilitaryAircraft - Restore displayed side identity on load and persistence")
+{
+	ResetTestEnvironment();
+
+	DisasterVehicle *plane = SpawnMilitaryAircraft(100 * TILE_SIZE, 100 * TILE_SIZE, Direction::SW, 0);
+	DisasterVehicle *marker = SpawnMilitaryTargetMarker(140 * TILE_SIZE, 100 * TILE_SIZE, 1);
+	REQUIRE(plane != nullptr);
+	REQUIRE(marker != nullptr);
+
+	/* Verify initial side recolouring. */
+	CHECK(plane->sprite_cache.sprite_seq.seq[0].pal == PALETTE_TO_BLUE);
+	CHECK(marker->sprite_cache.sprite_seq.seq[0].pal == PALETTE_TO_RED);
+
+	for (int i = 0; i < 10; i++) {
+		plane->Tick();
+	}
+	int pre_load_x = plane->x_pos;
+
+	/* Simulate save/load round-trip: SlVehicleDisaster does not persist sprite_cache palette.
+	 * Clear palette to mimic raw deserialization before post-load processing. */
+	plane->sprite_cache.sprite_seq.seq[0].pal = 0;
+	marker->sprite_cache.sprite_seq.seq[0].pal = 0;
+
+	/* Run AfterLoadVehiclesPhase2 (the post-load vehicle reconstruction hook). */
+	AfterLoadVehiclesPhase2(true);
+
+	/* Verify side identity palettes are correctly restored on load. */
+	CHECK(plane->sprite_cache.sprite_seq.seq[0].pal == PALETTE_TO_BLUE);
+	CHECK(marker->sprite_cache.sprite_seq.seq[0].pal == PALETTE_TO_RED);
+
+	/* Verify movement continuation resumes seamlessly after load. */
+	for (int i = 0; i < 10; i++) {
+		plane->Tick();
+	}
+	CHECK(plane->x_pos > pre_load_x);
+	CHECK(plane->GetMilitaryMovementState() == MMS_MOVING);
+}
+
 TEST_CASE("MilitaryAircraft - Scenario setup fixture")
 {
 	ResetTestEnvironment();
 
-	SetupMilitaryScenario();
+	bool ok = SetupMilitaryScenario();
+	CHECK(ok);
 
 	int plane_count = 0;
 	int marker_count = 0;
@@ -338,4 +426,49 @@ TEST_CASE("MilitaryAircraft - Scenario setup fixture")
 	CHECK(target->GetMilitarySide() == 1);
 	CHECK(target->x_pos == 140 * TILE_SIZE);
 	CHECK(target->y_pos == 100 * TILE_SIZE);
+}
+
+TEST_CASE("MilitaryAircraft - Ordinary load preservation and small map refusal")
+{
+	ResetTestEnvironment();
+
+	/* Verify no military vehicles exist initially in an ordinary clean environment. */
+	int military_count = 0;
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT || v->subtype == ST_MILITARY_TARGET_MARKER) military_count++;
+	}
+	CHECK(military_count == 0);
+
+	/* Small map: 128x128. SetupMilitaryScenario must refuse and leave world untouched. */
+	Map::Allocate(128, 128);
+	bool setup_ok = SetupMilitaryScenario();
+	CHECK(!setup_ok);
+
+	military_count = 0;
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT || v->subtype == ST_MILITARY_TARGET_MARKER) military_count++;
+	}
+	CHECK(military_count == 0);
+
+	/* 64x64 map: must also refuse before changing the world. */
+	Map::Allocate(64, 64);
+	setup_ok = SetupMilitaryScenario();
+	CHECK(!setup_ok);
+
+	military_count = 0;
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT || v->subtype == ST_MILITARY_TARGET_MARKER) military_count++;
+	}
+	CHECK(military_count == 0);
+
+	/* 256x256 map: accepts and initializes scenario. */
+	Map::Allocate(256, 256);
+	setup_ok = SetupMilitaryScenario();
+	CHECK(setup_ok);
+
+	military_count = 0;
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT || v->subtype == ST_MILITARY_TARGET_MARKER) military_count++;
+	}
+	CHECK(military_count > 0);
 }

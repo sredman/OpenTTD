@@ -3457,8 +3457,6 @@ bool AfterLoadGame()
 		}
 	}
 
-	MaybeSetupMilitaryScenario();
-
 	return true;
 }
 

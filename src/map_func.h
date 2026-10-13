@@ -23,8 +23,7 @@
  * with low optimization levels except when completely disabling it.
  */
 class Tile {
-private:
-	friend struct Map;
+public:
 	/**
 	 * Data that is stored per tile. Also used TileExtended for this.
 	 * Look at docs/landscape.html for the exact meaning of the members.
@@ -51,9 +50,17 @@ private:
 		uint16_t m8 = 0; ///< General purpose
 	};
 
+	static TileBase *active_base_tiles; ///< Pointer to currently active base tiles (live or snapshot).
+	static TileExtended *active_extended_tiles; ///< Pointer to currently active extended tiles (live or snapshot).
+
+private:
+	friend struct Map;
+	friend class MilitaryFog;
+	friend class ActiveSnapshotScope;
 	static std::unique_ptr<TileBase[]> base_tiles; ///< Pointer to the tile-array.
 	static std::unique_ptr<TileExtended[]> extended_tiles; ///< Pointer to the extended tile-array.
 
+private:
 	TileIndex tile; ///< The tile to access the map data for.
 
 public:
@@ -89,7 +96,7 @@ public:
 	 */
 	[[debug_inline]] inline uint8_t &type()
 	{
-		return base_tiles[this->tile.base()].type;
+		return active_base_tiles[this->tile.base()].type;
 	}
 
 	/**
@@ -100,7 +107,7 @@ public:
 	 */
 	[[debug_inline]] inline uint8_t &height()
 	{
-		return base_tiles[this->tile.base()].height;
+		return active_base_tiles[this->tile.base()].height;
 	}
 
 	/**
@@ -111,7 +118,7 @@ public:
 	 */
 	[[debug_inline]] inline uint8_t &m1()
 	{
-		return base_tiles[this->tile.base()].m1;
+		return active_base_tiles[this->tile.base()].m1;
 	}
 
 	/**
@@ -122,7 +129,7 @@ public:
 	 */
 	[[debug_inline]] inline uint16_t &m2()
 	{
-		return base_tiles[this->tile.base()].m2;
+		return active_base_tiles[this->tile.base()].m2;
 	}
 
 	/**
@@ -133,7 +140,7 @@ public:
 	 */
 	[[debug_inline]] inline uint8_t &m3()
 	{
-		return base_tiles[this->tile.base()].m3;
+		return active_base_tiles[this->tile.base()].m3;
 	}
 
 	/**
@@ -144,7 +151,7 @@ public:
 	 */
 	[[debug_inline]] inline uint8_t &m4()
 	{
-		return base_tiles[this->tile.base()].m4;
+		return active_base_tiles[this->tile.base()].m4;
 	}
 
 	/**
@@ -155,7 +162,7 @@ public:
 	 */
 	[[debug_inline]] inline uint8_t &m5()
 	{
-		return base_tiles[this->tile.base()].m5;
+		return active_base_tiles[this->tile.base()].m5;
 	}
 
 	/**
@@ -166,7 +173,7 @@ public:
 	 */
 	[[debug_inline]] inline uint8_t &m6()
 	{
-		return extended_tiles[this->tile.base()].m6;
+		return active_extended_tiles[this->tile.base()].m6;
 	}
 
 	/**
@@ -177,7 +184,7 @@ public:
 	 */
 	[[debug_inline]] inline uint8_t &m7()
 	{
-		return extended_tiles[this->tile.base()].m7;
+		return active_extended_tiles[this->tile.base()].m7;
 	}
 
 	/**
@@ -188,7 +195,7 @@ public:
 	 */
 	[[debug_inline]] inline uint16_t &m8()
 	{
-		return extended_tiles[this->tile.base()].m8;
+		return active_extended_tiles[this->tile.base()].m8;
 	}
 };
 

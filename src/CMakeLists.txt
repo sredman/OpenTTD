@@ -267,6 +267,8 @@ add_files(
     map.cpp
     map_func.h
     map_type.h
+    military_fog.cpp
+    military_fog.h
     misc.cpp
     misc_cmd.cpp
     misc_cmd.h

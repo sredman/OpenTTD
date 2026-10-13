@@ -91,6 +91,7 @@
 #include "network/network_func.h"
 #include "framerate_type.h"
 #include "viewport_cmd.h"
+#include "military_fog.h"
 
 #include <forward_list>
 #include <stack>
@@ -1313,7 +1314,12 @@ static void ViewportAddLandscape()
 				_vd.last_foundation_child[FoundationPart::Halftile] = LAST_CHILD_NONE;
 
 				_tile_type_procs[tile_type]->draw_tile_proc(&_cur_ti);
-				if (_cur_ti.tile != INVALID_TILE) DrawTileSelection(&_cur_ti);
+				if (_cur_ti.tile != INVALID_TILE) {
+					DrawTileSelection(&_cur_ti);
+					if (MilitaryFog::IsActive() && !MilitaryFog::IsTileCurrentlyVisibleForLocal(_cur_ti.tile)) {
+						DrawTileSelectionRect(&_cur_ti, PALETTE_TO_TRANSPARENT);
+					}
+				}
 			}
 		}
 	}
@@ -1813,6 +1819,8 @@ static void ViewportDrawStrings(ZoomLevel zoom, const StringSpriteToDrawVector *
 
 void ViewportDoDraw(const Viewport &vp, int left, int top, int right, int bottom)
 {
+	ActiveSnapshotScope snapshot_scope(MilitaryFog::GetLocalIntelligenceSide());
+
 	_vd.dpi.zoom = vp.zoom;
 	int mask = ScaleByZoom(-1, vp.zoom);
 

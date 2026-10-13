@@ -91,6 +91,8 @@ void MusicSystem::BuildPlaylists()
 	for (auto &playlist : this->standard_playlists) playlist.clear();
 	this->music_set.clear();
 
+	if (set == nullptr) return;
+
 	/* Build standard playlists, and a list of available music */
 	for (uint i = 0; i < NUM_SONGS_AVAILABLE; i++) {
 		PlaylistEntry entry(set, i);

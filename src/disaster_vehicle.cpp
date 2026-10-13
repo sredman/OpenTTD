@@ -27,6 +27,7 @@
 
 #include "aircraft.h"
 #include "disaster_vehicle.h"
+#include "military_fog.h"
 #include "industry.h"
 #include "station_base.h"
 #include "command_func.h"
@@ -764,6 +765,129 @@ DisasterVehicle *FindNearestEligibleEnemyMarker(const DisasterVehicle *aircraft)
 static bool DisasterTick_MilitaryAircraft(DisasterVehicle *v)
 {
 	v->tick_counter++;
+
+	if (MilitaryFog::IsActive()) {
+		MilitaryFog::UpdateAircraftScouting(v);
+
+		uint8_t side = v->GetMilitarySide();
+		const SideIntelligence &intel = MilitaryFog::GetSideIntelligence(side);
+
+		/* Validate existing target if set */
+		if (v->big_ufo_destroyer_target != VehicleID::Invalid()) {
+			bool still_known = false;
+			for (const auto &c : intel.contacts) {
+				if (c.vehicle_id == v->big_ufo_destroyer_target) {
+					still_known = true;
+					break;
+				}
+			}
+			if (!still_known) {
+				v->big_ufo_destroyer_target = VehicleID::Invalid();
+			}
+		}
+
+		/* If no target, select nearest known enemy contact */
+		if (v->big_ufo_destroyer_target == VehicleID::Invalid()) {
+			const MilitaryContact *contact = MilitaryFog::FindNearestEligibleEnemyContact(v);
+			if (contact != nullptr) {
+				v->big_ufo_destroyer_target = contact->vehicle_id;
+				v->dest_tile = contact->last_tile;
+				v->age = TimerGameCalendar::Date{0};
+				v->SetMilitaryMovementState(MMS_MOVING);
+			} else {
+				/* Exploration behavior: head towards nearest never-scouted tile */
+				TileIndex explore_tile = MilitaryFog::FindNearestNeverScoutedTile(v);
+				if (explore_tile != INVALID_TILE) {
+					v->big_ufo_destroyer_target = VehicleID::Invalid();
+					v->dest_tile = explore_tile;
+					v->age = TimerGameCalendar::Date{0};
+					v->SetMilitaryMovementState(MMS_MOVING);
+				} else {
+					/* Entire map scouted and no known enemies: idle safely */
+					v->big_ufo_destroyer_target = VehicleID::Invalid();
+					v->dest_tile = INVALID_TILE;
+					v->age = TimerGameCalendar::Date{0};
+					v->SetMilitaryMovementState(MMS_IDLE);
+					return true;
+				}
+			}
+		}
+
+		int target_x = 0;
+		int target_y = 0;
+		bool is_contact = false;
+
+		if (v->big_ufo_destroyer_target != VehicleID::Invalid()) {
+			for (const auto &c : intel.contacts) {
+				if (c.vehicle_id == v->big_ufo_destroyer_target) {
+					target_x = c.last_x;
+					target_y = c.last_y;
+					is_contact = true;
+					break;
+				}
+			}
+		} else if (v->dest_tile != INVALID_TILE) {
+			target_x = TileX(v->dest_tile) * TILE_SIZE + TILE_SIZE / 2;
+			target_y = TileY(v->dest_tile) * TILE_SIZE + TILE_SIZE / 2;
+		} else {
+			v->SetMilitaryMovementState(MMS_IDLE);
+			return true;
+		}
+
+		int dx = target_x - v->x_pos;
+		int dy = target_y - v->y_pos;
+		int dist_x = std::abs(dx);
+		int dist_y = std::abs(dy);
+
+		if (dist_x + dist_y <= 8) {
+			if (is_contact) {
+				bool cleared = MilitaryFog::CheckArrivalAndClearEmptyContact(v);
+				if (cleared) {
+					/* Contact location revisited empty: contact was cleared, re-evaluate next tick */
+					v->SetMilitaryMovementState(MMS_IDLE);
+					v->age = TimerGameCalendar::Date{0};
+					return true;
+				}
+			}
+			v->SetMilitaryMovementState(MMS_ARRIVED);
+			v->age = TimerGameCalendar::Date{0};
+			return true;
+		}
+
+		/* Small deterministic straight-line step */
+		int abs_dx = dist_x;
+		int abs_dy = dist_y;
+		int step_x = 0;
+		int step_y = 0;
+
+		if (abs_dx >= abs_dy) {
+			step_x = (dx > 0) ? 1 : (dx < 0 ? -1 : 0);
+			int err = v->age.base() + abs_dy;
+			if (err >= abs_dx) {
+				err -= abs_dx;
+				step_y = (dy > 0) ? 1 : (dy < 0 ? -1 : 0);
+			}
+			v->age = TimerGameCalendar::Date{err};
+		} else {
+			step_y = (dy > 0) ? 1 : (dy < 0 ? -1 : 0);
+			int err = v->age.base() + abs_dx;
+			if (err >= abs_dy) {
+				err -= abs_dy;
+				step_x = (dx > 0) ? 1 : (dx < 0 ? -1 : 0);
+			}
+			v->age = TimerGameCalendar::Date{err};
+		}
+
+		/* Turn towards the target */
+		v->direction = GetDirectionTowards(v, target_x, target_y);
+		v->SetMilitaryMovementState(MMS_MOVING);
+
+		int new_x = Clamp(v->x_pos + step_x, 0, (int)(Map::MaxX() * TILE_SIZE));
+		int new_y = Clamp(v->y_pos + step_y, 0, (int)(Map::MaxY() * TILE_SIZE));
+
+		v->UpdatePosition(new_x, new_y, GetAircraftFlightLevel(v));
+		return true;
+	}
 
 	DisasterVehicle *target = nullptr;
 	if (v->big_ufo_destroyer_target != VehicleID::Invalid()) {

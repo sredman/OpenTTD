@@ -57,6 +57,7 @@
 #include "train_cmd.h"
 #include "vehicle_cmd.h"
 #include "newgrf_roadstop.h"
+#include "military_fog.h"
 #include "script/api/script_event_types.hpp"
 #include "timer/timer.h"
 #include "timer/timer_game_calendar.h"
@@ -1185,6 +1186,10 @@ void ViewportAddVehicles(DrawPixelInfo *dpi)
 			const Vehicle *v = _vehicle_viewport_hash[x + y]; // already masked & 0xFFF
 
 			while (v != nullptr) {
+				if (MilitaryFog::ShouldHideVehicleForLocal(v)) {
+					v = v->hash_viewport_next;
+					continue;
+				}
 
 				if (!v->vehstatus.Test(VehState::Hidden) &&
 					l <= v->coord.right + xb &&
@@ -1268,6 +1273,11 @@ Vehicle *CheckClickOnVehicle(const Viewport &vp, int x, int y)
 			Vehicle *v = _vehicle_viewport_hash[hx + hy]; // already masked & 0xFFF
 
 			while (v != nullptr) {
+				if (MilitaryFog::ShouldHideVehicleForLocal(v)) {
+					v = v->hash_viewport_next;
+					continue;
+				}
+
 				if (!v->vehstatus.Any({VehState::Hidden, VehState::Unclickable}) &&
 					x >= v->coord.left && x <= v->coord.right &&
 					y >= v->coord.top && y <= v->coord.bottom) {

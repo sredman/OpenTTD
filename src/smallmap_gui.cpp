@@ -31,6 +31,7 @@
 #include "timer/timer_window.h"
 #include "smallmap_gui.h"
 #include "core/enum_type.hpp"
+#include "military_fog.h"
 
 #include "widgets/smallmap_widget.h"
 
@@ -941,8 +942,11 @@ protected:
 			uint32_t val = this->GetTileColours(ta);
 			uint8_t *val8 = (uint8_t *)&val;
 			int idx = std::max(0, -start_pos);
+			TileIndex tile = TileXY(xc, yc);
+			bool never_scouted = MilitaryFog::IsActive() && !MilitaryFog::IsTileScouted(MilitaryFog::GetLocalIntelligenceSide(), tile);
 			for (int pos = std::max(0, start_pos); pos < end_pos; pos++) {
-				blitter->SetPixel(dst, idx, 0, PixelColour{val8[idx]});
+				PixelColour col = never_scouted ? PC_DARK_GREY : PixelColour{val8[idx]};
+				blitter->SetPixel(dst, idx, 0, col);
 				idx++;
 			}
 		/* Switch to next tile in the column */
@@ -959,6 +963,7 @@ protected:
 		for (const Vehicle *v : Vehicle::Iterate()) {
 			if (v->type == VehicleType::Effect) continue;
 			if (v->vehstatus.Any({VehState::Hidden, VehState::Unclickable})) continue;
+			if (MilitaryFog::ShouldHideVehicleForLocal(v)) continue;
 
 			/* Remap into flat coordinates. */
 			Point pt = this->RemapTile(v->x_pos / (int)TILE_SIZE, v->y_pos / (int)TILE_SIZE);
@@ -1065,6 +1070,7 @@ protected:
 	 */
 	void DrawSmallMap(DrawPixelInfo *dpi) const
 	{
+		ActiveSnapshotScope snapshot_scope(MilitaryFog::GetLocalIntelligenceSide());
 		Blitter *blitter = BlitterFactory::GetCurrentBlitter();
 		AutoRestoreBackup dpi_backup(_cur_dpi, dpi);
 

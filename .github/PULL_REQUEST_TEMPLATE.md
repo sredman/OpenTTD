@@ -49,7 +49,7 @@ Describe here
 
 Some things are not automated, and forgotten often. This list is a reminder for the reviewers.
 * [ ] Repository boundary: Targets `sredman/OpenTTD`; upstream isolation confirmed.
-* [ ] Unified test gate executed (`./scripts/gate.sh`); 100% test pass rate across unit and regression suites.
+* [ ] Unified test gate executed (dedicated and graphical modes via `./scripts/gate.sh`); 100% test pass rate across unit and regression suites.
 * [ ] Process failure & timeout enforcement verified in test runner.
 * [ ] Observable scenario baseline asserted (real entities/state).
 * [ ] Persistence and savegame compatibility verified for new state (or marked N/A if none).

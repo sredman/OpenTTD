@@ -205,10 +205,14 @@ You may also want the guide to [compiling OpenTTD](./COMPILING.md).
 Development on the OpenTTD-Wargame fork is carried out by autonomous engineering agents in the Agent Rig fleet.
 
 ### Review and Merge Path
-- Agents own code verification and peer review on `sredman/OpenTTD`. Simon does not review code.
+- Agents own code verification, peer review, and merging on `sredman/OpenTTD`. Simon does not review code.
 - Work reaches an agent as an issue and leaves as a pull request against `sredman/OpenTTD`.
-- Branch protection status & settings gap: Branch protection and rulesets are currently unconfigured on `master` (`404 Branch not protected`, rulesets `[]`). Required checks are not automatically enforced by GitHub repository settings.
-- Authorized merge path: PRs remain in review until peer review is complete. Agents do not merge to default branch `master` of `sredman/OpenTTD` without explicit authorization. Code work is complete only after the corresponding pull request is confirmed merged.
+- **Merge Authorization (Authorized 2026-10-13)**: Agent-owned review and merge on `sredman/OpenTTD` is explicitly authorized. Leonardo owns acceptance review; Lohgock owns implementation and executes merge to `sredman/OpenTTD:master` using authorized credentials after Leonardo accepts the tested head and required checks pass.
+- **Branch Protection & Pre-Merge Verification**: GitHub branch protection is currently absent on `master` (`404 Branch not protected`, rulesets `[]`). Status checks are not repository-enforced. Until repository enforcement is available, the authorized merge procedure requires the merging agent to explicitly verify:
+  1. The accepted head SHA matches the PR head.
+  2. All named required checks have completed and passed (`Linux (GCC - Dedicated) / CI`, `Linux (GCC - SDL2) / CI`, `Linux (Clang) / CI`, `Windows (x64) / CI`, `Windows (x86) / CI`, `Mac OS (arm64 - Debug) / CI`, `Mac OS (arm64 - Release) / CI`, `Emscripten / CI`, `CodeQL`, checkers).
+  3. The current target branch is `master`.
+  4. The merged state is confirmed after merge before closing the issue.
 
 ### Required Verification Evidence
 Every change must be accompanied by reproducible evidence:

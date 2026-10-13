@@ -113,17 +113,23 @@ cmake .. -G Ninja -DCMAKE_PREFIX_PATH=<prefix>
 Run the shared fail-closed test gate used both locally and in fork CI:
 
 ```bash
-./scripts/gate.sh [build_dir] [gui_build_dir]
-# e.g.:
-./scripts/gate.sh build build-gui
+./scripts/gate.sh [--mode dedicated|graphical|both|auto] [build_dir] [gui_build_dir]
+# e.g. dedicated gate:
+./scripts/gate.sh --mode dedicated build
+# e.g. graphical gate:
+./scripts/gate.sh --mode graphical build-gui
+# e.g. both:
+./scripts/gate.sh --mode both build build-gui
 ```
 
 The gate script performs:
 1. Validates build directories and builds required targets (`openttd`, `openttd_test`, `regression_files`, `regression`).
-2. Confirms all required artifacts and fixtures exist (`openttd`, `openttd_test`, `regression.cfg`, `test.sav`).
-3. Executes all test suites via `ctest` with a 60-second timeout, verifying 100% pass rate and expected test count (at least 99 tests).
-4. Runs bounded headless dedicated smoke simulation (`-vnull:ticks=500 -snull -mnull -bnull -x -Q`).
-5. Runs bounded graphical client smoke simulation if graphical build exists.
+2. Confirms all required artifacts, fixtures, and binaries exist (`openttd`, `openttd_test`, `regression.cfg`, `test.sav`).
+3. Verifies that every required test in `scripts/required_tests.txt` is registered in CTest inventory (rejecting missing/omitted required tests).
+4. Executes test suites via `ctest` with a 60-second timeout, preserving failure output on error and rejecting any skipped, disabled, or failing tests.
+5. Verifies every individual required test passed.
+6. In dedicated mode: runs bounded headless dedicated smoke simulation (`-D -vnull:ticks=500 -snull -mnull -bnull -x -Q`).
+7. In graphical mode: runs bounded graphical client smoke simulation via SDL2 backend (`-v sdl:ticks=100 -b 32bpp-anim -s null -m null -x -Q`). Missing GUI executable or graphical initialization failure fails the gate.
 
 ### 4. Running Unit Tests Directly
 Build and run the Catch2 test suite:

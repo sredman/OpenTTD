@@ -5,7 +5,7 @@ Commit message:
 - Please use Feature / Add / Change / Fix followed by "[NewGRF]" or "[Script]" for moddable changes. E.g.: "Feature: [NewGRF] My cool new NewGRF addition".
 - Please use Codechange / Codefix for developer-facing changes. E.g.: "Codefix #1234: Validate against nullptr properly".
 
-See https://github.com/OpenTTD/OpenTTD/blob/master/CODINGSTYLE.md#commit-message for more details.
+See https://github.com/sredman/OpenTTD/blob/master/CODINGSTYLE.md#commit-message for more details.
 -->
 
 ## Motivation / Problem
@@ -48,8 +48,14 @@ Describe here
 ## Checklist for review
 
 Some things are not automated, and forgotten often. This list is a reminder for the reviewers.
+* [ ] Repository boundary: Targets `sredman/OpenTTD`; upstream isolation confirmed.
+* [ ] Unified test gate executed (dedicated and graphical modes via `./scripts/gate.sh`); 100% test pass rate across unit and regression suites.
+* [ ] Process failure & timeout enforcement verified in test runner.
+* [ ] Observable scenario baseline asserted (real entities/state).
+* [ ] Persistence and savegame compatibility verified for new state (or marked N/A if none).
+* [ ] Check names, branch protection status, and merge authorization recorded.
 * The bug fix is important enough to be backported? (label: 'backport requested')
-* This PR touches english.txt or translations? Check the [guidelines](https://github.com/OpenTTD/OpenTTD/blob/master/docs/eints.md)
+* This PR touches english.txt or translations? Check the [guidelines](https://github.com/sredman/OpenTTD/blob/master/docs/eints.md)
 * This PR affects the GS/AI API? (label 'needs review: Script API')
     * ai_changelog.hpp, game_changelog.hpp need updating.
     * The compatibility wrappers (compat_*.nut) need updating.

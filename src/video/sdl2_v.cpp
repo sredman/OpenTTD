@@ -617,6 +617,7 @@ std::optional<std::string_view> VideoDriver_SDL_Base::Start(const StringList &pa
 #endif
 
 	this->startup_display = FindStartupDisplay(GetDriverParamInt(param, "display", -1));
+	this->ticks = GetDriverParamInt(param, "ticks", 0);
 
 	if (!CreateMainSurface(_cur_resolution.width, _cur_resolution.height, false)) {
 		return SDL_GetError();
@@ -710,6 +711,10 @@ void VideoDriver_SDL_Base::LoopOnce()
 #ifndef __EMSCRIPTEN__
 	this->SleepTillNextTick();
 #endif
+
+	if (this->ticks > 0 && --this->ticks == 0) {
+		_exit_game = true;
+	}
 }
 
 void VideoDriver_SDL_Base::MainLoop()

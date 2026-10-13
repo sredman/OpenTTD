@@ -98,20 +98,15 @@ jobs:
       run: |
         true
 
+  # External store uploads are disabled on the fork to ensure publishing targets only sredman/OpenTTD
   upload-cdn:
     name: Upload (CDN)
     needs:
     - source
     - upload
-
-    # As windows-store is condition, we need to check ourselves if we need to run.
-    # The always() makes sure the rest is always evaluated.
-    # Yes, you even need to do this if you yourself don't depend on the condition.
-    if: always() && needs.source.result == 'success' && needs.upload.result == 'success'
-
+    if: false # Disabled on fork: external publishing targets only sredman/OpenTTD
     uses: ./.github/workflows/upload-cdn.yml
     secrets: inherit
-
     with:
       version: ${{ needs.source.outputs.version }}
       folder: ${{ needs.source.outputs.folder }}
@@ -122,16 +117,9 @@ jobs:
     needs:
     - source
     - upload
-
-    # As windows-store is condition, we need to check ourselves if we need to run.
-    # The always() makes sure the rest is always evaluated.
-    # Yes, you even need to do this if you yourself don't depend on the condition.
-    # Additionally, only nightlies and releases go to Steam; not PRs.
-    if: always() && needs.source.result == 'success' && needs.upload.result == 'success' && (needs.source.outputs.trigger_type == 'new-master' || needs.source.outputs.trigger_type == 'new-tag')
-
+    if: false # Disabled on fork: external publishing targets only sredman/OpenTTD
     uses: ./.github/workflows/upload-steam.yml
     secrets: inherit
-
     with:
       version: ${{ needs.source.outputs.version }}
       trigger_type: ${{ needs.source.outputs.trigger_type }}
@@ -141,16 +129,9 @@ jobs:
     needs:
     - source
     - upload
-
-    # As windows-store is condition, we need to check ourselves if we need to run.
-    # The always() makes sure the rest is always evaluated.
-    # Yes, you even need to do this if you yourself don't depend on the condition.
-    # Additionally, only releases go to GOG; not nightlies or PRs.
-    if: always() && needs.source.result == 'success' && needs.upload.result == 'success' && needs.source.outputs.trigger_type == 'new-tag'
-
+    if: false # Disabled on fork: external publishing targets only sredman/OpenTTD
     uses: ./.github/workflows/upload-gog.yml
     secrets: inherit
-
     with:
       version: ${{ needs.source.outputs.version }}
 
@@ -158,13 +139,33 @@ jobs:
     name: Upload (Windows Store)
     needs:
     - upload
-
-    # Only upload final release builds to Windows Store; "-beta" or "-RC" tags should be ignored
-    if: needs.source.outputs.is_tag == 'true' && !contains(needs.source.outputs.version, '-')
-
+    if: false # Disabled on fork: external publishing targets only sredman/OpenTTD
     uses: ./.github/workflows/upload-windows-store.yml
     secrets: inherit
-
     with:
       version: ${{ needs.source.outputs.version }}
       trigger_type: ${{ needs.source.outputs.trigger_type }}
+
+  publish-github-release:
+    name: Publish GitHub Release (sredman/OpenTTD)
+    needs:
+    - source
+    - upload
+    if: always() && needs.source.result == 'success' && needs.upload.result == 'success' && needs.source.outputs.is_tag == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Download all bundles
+      uses: actions/download-artifact@v8
+      with:
+        pattern: openttd-*
+        merge-multiple: true
+        path: release-bundles
+
+    - name: Publish GitHub Release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release upload "${{ needs.source.outputs.version }}" release-bundles/* --repo ${{ github.repository }} --clobber || \
+        gh release create "${{ needs.source.outputs.version }}" release-bundles/* --repo ${{ github.repository }} --title "${{ needs.source.outputs.version }}" --notes "OpenTTD-Wargame release ${{ needs.source.outputs.version }}"

@@ -40,7 +40,7 @@ macro(create_regression SCRIPT_FOLDER)
                     -DREGRESSION_TEST=${REGRESSION_TEST_NAME}
                     -DSCRIPT_FOLDER=${SCRIPT_FOLDER}
                     -P "${CMAKE_SOURCE_DIR}/cmake/scripts/Regression.cmake"
-            DEPENDS openttd regression_${REGRESSION_TEST_NAME}_files
+            DEPENDS openttd regression_${REGRESSION_TEST_NAME}_files regression_files
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
             COMMENT "Running regression test ${REGRESSION_TEST_NAME}"
     )

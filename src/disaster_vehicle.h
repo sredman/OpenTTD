@@ -123,4 +123,9 @@ DisasterVehicle *FindNearestEligibleEnemyMarker(const DisasterVehicle *aircraft)
  */
 bool SetupMilitaryScenario();
 
+/**
+ * Reset fixed military demonstration scenario and disable military fog of war.
+ */
+void ResetMilitaryScenario();
+
 #endif /* DISASTER_VEHICLE_H */

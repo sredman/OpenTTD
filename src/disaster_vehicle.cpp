@@ -1315,14 +1315,11 @@ bool SetupMilitaryScenario()
 	/* Refuse insufficient dimensions before changing the world. Minimum 256x256 required. */
 	if (Map::SizeX() < 256 || Map::SizeY() < 256) return false;
 
-	/* Remove existing military units/markers if any */
-	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
-		if (v->subtype == ST_MILITARY_AIRCRAFT ||
-				v->subtype == ST_MILITARY_AIRCRAFT_SHADOW ||
-				v->subtype == ST_MILITARY_TARGET_MARKER) {
-			delete v;
-		}
-	}
+	/* Reset any existing military scenario and fog */
+	ResetMilitaryScenario();
+
+	/* Enable and initialize military fog of war */
+	MilitaryFog::Initialize();
 
 	/* Fixed fixture:
 	 * Friendly marker (Side 0) at (80, 100).
@@ -1336,4 +1333,19 @@ bool SetupMilitaryScenario()
 
 	SpawnMilitaryAircraft(100 * TILE_SIZE, 100 * TILE_SIZE, Direction::E, 0);
 	return true;
+}
+
+/* Reset fixed military demonstration scenario. */
+void ResetMilitaryScenario()
+{
+	/* Remove existing military units/markers if any */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT ||
+				v->subtype == ST_MILITARY_AIRCRAFT_SHADOW ||
+				v->subtype == ST_MILITARY_TARGET_MARKER) {
+			delete v;
+		}
+	}
+
+	MilitaryFog::Reset();
 }

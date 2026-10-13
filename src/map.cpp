@@ -13,6 +13,8 @@
 #include "error_func.h"
 #include "pathfinder/water_regions.h"
 
+#include "military_fog.h"
+
 #include "safeguards.h"
 
 /* static */ uint Map::log_x;     ///< 2^_map_log_x == _map_size_x
@@ -45,6 +47,8 @@
 			(size_y & (size_y - 1)) != 0) {
 		FatalError("Invalid map size");
 	}
+
+	MilitaryFog::Reset();
 
 	Debug(Facility::Map, Severity::Error, "Allocating map of size {}x{}", size_x, size_y);
 

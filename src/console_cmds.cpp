@@ -47,6 +47,7 @@
 #include "company_cmd.h"
 #include "misc_cmd.h"
 #include "disaster_vehicle.h"
+#include "military_fog.h"
 
 #if defined(WITH_ZLIB)
 #include "network/network_content.h"
@@ -2969,6 +2970,42 @@ static bool ConSetupMilitaryScenario([[maybe_unused]] std::span<std::string_view
 	return true;
 }
 
+/** Reset military scenario command. @copydoc IConsoleCmdProc */
+static bool ConResetMilitaryScenario([[maybe_unused]] std::span<std::string_view> argv)
+{
+	ResetMilitaryScenario();
+	IConsolePrint(CC_DEFAULT, "Military scenario reset.");
+	return true;
+}
+
+/** Relocate military aircraft command. @copydoc IConsoleCmdProc */
+static bool ConRelocateMilitaryAircraft(std::span<std::string_view> argv)
+{
+	if (argv.size() < 3) {
+		IConsolePrint(CC_HELP, "Relocate military aircraft. Usage: 'relocate_military_aircraft <tile_x> <tile_y>'.");
+		return false;
+	}
+	auto x = ParseType<int>(argv[1]);
+	auto y = ParseType<int>(argv[2]);
+	if (!x.has_value() || !y.has_value()) return false;
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(*x * TILE_SIZE, *y * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) {
+				v->Next()->UpdatePosition(*x * TILE_SIZE, *y * TILE_SIZE, 0);
+			}
+			if (MilitaryFog::IsActive()) {
+				MilitaryFog::UpdateAllVisibility();
+			}
+			IConsolePrint(CC_DEFAULT, "Military aircraft relocated.");
+			return true;
+		}
+	}
+	IConsolePrint(CC_DEFAULT, "No military aircraft found.");
+	return false;
+}
+
+
 /** Console command registration. */
 void IConsoleStdLibRegister()
 {
@@ -3113,4 +3150,6 @@ void IConsoleStdLibRegister()
 
 	IConsole::CmdRegister("dump_info",               ConDumpInfo);
 	IConsole::CmdRegister("setup_military_scenario", ConSetupMilitaryScenario);
+	IConsole::CmdRegister("reset_military_scenario", ConResetMilitaryScenario);
+	IConsole::CmdRegister("relocate_military_aircraft", ConRelocateMilitaryAircraft);
 }

@@ -16,9 +16,13 @@
 #include <algorithm>
 #include "safeguards.h"
 
+/** Whether military fog of war is globally active. */
 static bool _military_fog_active = false;
+/** Mapping from company ID to intelligence side. */
 static std::array<uint8_t, MAX_COMPANIES> _company_intel_side{};
+/** Intelligence state for each military side. */
 static std::array<SideIntelligence, MAX_MILITARY_SIDES> _side_intelligence{};
+
 
 void SideIntelligence::Allocate(size_t map_size)
 {
@@ -185,8 +189,8 @@ bool MilitaryFog::ShouldHideVehicle(uint8_t side, const Vehicle *v)
 	if (!_military_fog_active || v == nullptr) return false;
 	if (v->type == VehicleType::Effect) return false;
 
-	/* Player's own transport company vehicles are never hidden behind fog */
-	if (v->owner != OWNER_NONE && GetCompanyIntelligenceSide(v->owner) == side) {
+	/* Player's own transport company vehicles are never hidden from the local player */
+	if (v->owner != OWNER_NONE && Company::IsValidID(_local_company) && v->owner == _local_company) {
 		return false;
 	}
 
@@ -202,13 +206,14 @@ bool MilitaryFog::ShouldHideVehicle(uint8_t side, const Vehicle *v)
 		return false;
 	}
 
-	/* Competitor vehicles disappear when behind fog */
+	/* Competitor transport company vehicles disappear when behind fog, even if affiliated with the same side */
 	if (v->owner != OWNER_NONE) {
 		return !IsTileCurrentlyVisible(side, v->tile);
 	}
 
 	return false;
 }
+
 
 bool MilitaryFog::ShouldHideVehicleForLocal(const Vehicle *v)
 {
@@ -593,16 +598,34 @@ void MilitaryFog::Save()
 		}
 
 		/* Save contacts */
-		SlWriteByte(static_cast<uint8_t>(intel.contacts.size()));
+		uint32_t num_contacts = static_cast<uint32_t>(intel.contacts.size());
+		SlWriteByte(GB(num_contacts, 24, 8));
+		SlWriteByte(GB(num_contacts, 16, 8));
+		SlWriteByte(GB(num_contacts, 8, 8));
+		SlWriteByte(GB(num_contacts, 0, 8));
 		for (const auto &c : intel.contacts) {
-			SlWriteByte(GB(c.vehicle_id.base(), 0, 8));
+			/* VehicleID (32-bit) */
+			SlWriteByte(GB(c.vehicle_id.base(), 24, 8));
+			SlWriteByte(GB(c.vehicle_id.base(), 16, 8));
 			SlWriteByte(GB(c.vehicle_id.base(), 8, 8));
-			SlWriteByte(GB(c.last_x, 0, 8));
-			SlWriteByte(GB(c.last_x, 8, 8));
-			SlWriteByte(GB(c.last_y, 0, 8));
-			SlWriteByte(GB(c.last_y, 8, 8));
-			SlWriteByte(GB(c.last_tile.base(), 0, 8));
+			SlWriteByte(GB(c.vehicle_id.base(), 0, 8));
+			/* Pixel coordinates last_x, last_y (32-bit signed) */
+			uint32_t ux = static_cast<uint32_t>(c.last_x);
+			SlWriteByte(GB(ux, 24, 8));
+			SlWriteByte(GB(ux, 16, 8));
+			SlWriteByte(GB(ux, 8, 8));
+			SlWriteByte(GB(ux, 0, 8));
+			uint32_t uy = static_cast<uint32_t>(c.last_y);
+			SlWriteByte(GB(uy, 24, 8));
+			SlWriteByte(GB(uy, 16, 8));
+			SlWriteByte(GB(uy, 8, 8));
+			SlWriteByte(GB(uy, 0, 8));
+			/* TileIndex (32-bit) */
+			SlWriteByte(GB(c.last_tile.base(), 24, 8));
+			SlWriteByte(GB(c.last_tile.base(), 16, 8));
 			SlWriteByte(GB(c.last_tile.base(), 8, 8));
+			SlWriteByte(GB(c.last_tile.base(), 0, 8));
+			/* Side and visibility */
 			SlWriteByte(c.side);
 			SlWriteByte(c.currently_visible ? 1 : 0);
 		}
@@ -653,22 +676,37 @@ void MilitaryFog::Load()
 			intel.extended_tiles[i].m8 = (uint16_t)(m8_lo | (m8_hi << 8));
 		}
 
-		uint8_t num_contacts = SlReadByte();
+		uint32_t num_contacts = (static_cast<uint32_t>(SlReadByte()) << 24);
+		num_contacts |= (static_cast<uint32_t>(SlReadByte()) << 16);
+		num_contacts |= (static_cast<uint32_t>(SlReadByte()) << 8);
+		num_contacts |= static_cast<uint32_t>(SlReadByte());
 		intel.contacts.clear();
-		for (uint8_t j = 0; j < num_contacts; j++) {
+		for (uint32_t j = 0; j < num_contacts; j++) {
 			MilitaryContact c;
-			uint8_t vid_lo = SlReadByte();
-			uint8_t vid_hi = SlReadByte();
-			c.vehicle_id = VehicleID{static_cast<uint>(vid_lo | (vid_hi << 8))};
-			uint8_t lx_lo = SlReadByte();
-			uint8_t lx_hi = SlReadByte();
-			c.last_x = (int)(int16_t)(lx_lo | (lx_hi << 8));
-			uint8_t ly_lo = SlReadByte();
-			uint8_t ly_hi = SlReadByte();
-			c.last_y = (int)(int16_t)(ly_lo | (ly_hi << 8));
-			uint8_t lt_lo = SlReadByte();
-			uint8_t lt_hi = SlReadByte();
-			c.last_tile = TileIndex{static_cast<uint>(lt_lo | (lt_hi << 8))};
+			uint32_t vid = (static_cast<uint32_t>(SlReadByte()) << 24);
+			vid |= (static_cast<uint32_t>(SlReadByte()) << 16);
+			vid |= (static_cast<uint32_t>(SlReadByte()) << 8);
+			vid |= static_cast<uint32_t>(SlReadByte());
+			c.vehicle_id = VehicleID{vid};
+
+			uint32_t lx = (static_cast<uint32_t>(SlReadByte()) << 24);
+			lx |= (static_cast<uint32_t>(SlReadByte()) << 16);
+			lx |= (static_cast<uint32_t>(SlReadByte()) << 8);
+			lx |= static_cast<uint32_t>(SlReadByte());
+			c.last_x = static_cast<int>(lx);
+
+			uint32_t ly = (static_cast<uint32_t>(SlReadByte()) << 24);
+			ly |= (static_cast<uint32_t>(SlReadByte()) << 16);
+			ly |= (static_cast<uint32_t>(SlReadByte()) << 8);
+			ly |= static_cast<uint32_t>(SlReadByte());
+			c.last_y = static_cast<int>(ly);
+
+			uint32_t lt = (static_cast<uint32_t>(SlReadByte()) << 24);
+			lt |= (static_cast<uint32_t>(SlReadByte()) << 16);
+			lt |= (static_cast<uint32_t>(SlReadByte()) << 8);
+			lt |= static_cast<uint32_t>(SlReadByte());
+			c.last_tile = TileIndex{lt};
+
 			c.side = SlReadByte();
 			c.currently_visible = (SlReadByte() != 0);
 			intel.contacts.push_back(c);
@@ -678,7 +716,9 @@ void MilitaryFog::Load()
 	ReconstructVisibility(false);
 }
 
+/** Chunk handler for MFOG (military fog of war) savegame data. */
 struct MFOGChunkHandler : ChunkHandler {
+	/** Construct the MFOG chunk handler. */
 	MFOGChunkHandler() : ChunkHandler("MFOG", ChunkType::Riff) {}
 
 	void Save() const override
@@ -691,7 +731,7 @@ struct MFOGChunkHandler : ChunkHandler {
 				len += map_size; // is_scouted
 				len += map_size * 8; // base_tiles
 				len += map_size * 4; // extended_tiles
-				len += 1 + MilitaryFog::GetSideIntelligence(s).contacts.size() * 10;
+				len += 4 + MilitaryFog::GetSideIntelligence(s).contacts.size() * 18;
 			}
 		}
 		SlSetLength(len);
@@ -702,8 +742,15 @@ struct MFOGChunkHandler : ChunkHandler {
 	{
 		MilitaryFog::Load();
 	}
+
 };
 
+/** Instance of chunk handler for MFOG savegame data. */
 static const MFOGChunkHandler MFOG;
+/** Table of chunk handlers for military fog subsystem. */
 static const ChunkHandlerRef military_fog_chunk_handlers[] = { MFOG };
+/**
+ * Exported chunk handler table reference for military fog subsystem.
+ * @return ChunkHandlerTable containing military fog chunk handlers.
+ */
 extern const ChunkHandlerTable _military_fog_chunk_handlers(military_fog_chunk_handlers);

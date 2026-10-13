@@ -1113,7 +1113,12 @@ void CallVehicleTicks()
 
 		AddVehicleAdviceNewsItem(AdviceType::AutorenewFailed, std::move(headline), v->index);
 	}
+
+	if (MilitaryFog::IsActive()) {
+		MilitaryFog::UpdateAllVisibility();
+	}
 }
+
 
 /**
  * Add vehicle sprite for drawing to the screen.

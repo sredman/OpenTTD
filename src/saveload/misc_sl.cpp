@@ -58,7 +58,8 @@ void ResetViewportAfterLoadGame()
 {
 	if (_saved_scrollpos_x == INT_MAX && _saved_scrollpos_y == INT_MAX) return;
 
-	Window *w = GetMainWindow();
+	Window *w = FindWindowById(WindowClass::MainWindow, 0);
+	if (w == nullptr || w->viewport == nullptr) return;
 
 	w->viewport->scrollpos_x = _saved_scrollpos_x;
 	w->viewport->scrollpos_y = _saved_scrollpos_y;

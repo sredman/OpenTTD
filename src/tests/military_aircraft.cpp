@@ -10,6 +10,7 @@
 #include "../stdafx.h"
 #include "../3rdparty/catch2/catch.hpp"
 #include "../disaster_vehicle.h"
+#include "../military_fog.h"
 #include "../map_func.h"
 #include "../saveload/saveload_internal.h"
 #include "mock_environment.h"
@@ -418,15 +419,26 @@ TEST_CASE("MilitaryAircraft - Scenario setup fixture")
 	REQUIRE(aircraft != nullptr);
 	CHECK(aircraft->GetMilitarySide() == 0);
 
-	/* Aircraft targets nearest eligible enemy marker and moves toward it. */
+	/* Under fog of war activated by SetupMilitaryScenario, the aircraft starts with no contacts
+	 * and explores towards the nearest never-scouted tile. */
+	CHECK(MilitaryFog::IsActive());
 	aircraft->Tick();
 	CHECK(aircraft->GetMilitaryMovementState() == MMS_MOVING);
+	CHECK(aircraft->big_ufo_destroyer_target == VehicleID::Invalid());
+	CHECK(aircraft->dest_tile != INVALID_TILE);
+
+	/* Once the aircraft moves within scouting radius of enemy marker at (140, 100),
+	 * the contact is discovered and targeted. */
+	aircraft->UpdatePosition(136 * TILE_SIZE, 100 * TILE_SIZE, GetAircraftFlightLevel(aircraft));
+	aircraft->Tick();
+	CHECK(aircraft->big_ufo_destroyer_target != VehicleID::Invalid());
 	DisasterVehicle *target = DisasterVehicle::GetIfValid(aircraft->big_ufo_destroyer_target);
 	REQUIRE(target != nullptr);
 	CHECK(target->GetMilitarySide() == 1);
 	CHECK(target->x_pos == 140 * TILE_SIZE);
 	CHECK(target->y_pos == 100 * TILE_SIZE);
 }
+
 
 TEST_CASE("MilitaryAircraft - Ordinary load preservation and small map refusal")
 {

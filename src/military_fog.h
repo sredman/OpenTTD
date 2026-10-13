@@ -69,7 +69,15 @@ struct SideIntelligence {
 	std::vector<MilitaryContact> contacts;                ///< Known enemy contacts.
 	uint32_t never_scouted_count = 0;                     ///< Count of never-scouted tiles.
 
+	/**
+	 * Allocate memory structures for a given map size.
+	 * @param map_size Total number of tiles on the map.
+	 */
 	void Allocate(size_t map_size);
+
+	/**
+	 * Reset and deallocate intelligence state.
+	 */
 	void Reset();
 };
 
@@ -78,46 +86,189 @@ struct SideIntelligence {
  */
 class MilitaryFog {
 public:
+	/**
+	 * Check whether military fog of war is currently enabled.
+	 * @return True if fog of war is active, false otherwise.
+	 */
 	static bool IsActive();
+
+	/**
+	 * Set military fog of war active status.
+	 * @param active True to activate, false to deactivate.
+	 */
 	static void SetActive(bool active);
 
+	/**
+	 * Initialize military fog of war state for all sides on the active map.
+	 */
 	static void Initialize();
+
+	/**
+	 * Reset and clear all military fog of war state and deallocate snapshot buffers.
+	 */
 	static void Reset();
 
+	/**
+	 * Get the intelligence side affiliation for a transport company.
+	 * @param company The company ID to query.
+	 * @return Side index (0 to MAX_MILITARY_SIDES - 1).
+	 */
 	static uint8_t GetCompanyIntelligenceSide(CompanyID company);
+
+	/**
+	 * Set the intelligence side affiliation for a transport company.
+	 * @param company The company ID to configure.
+	 * @param side Side index (0 to MAX_MILITARY_SIDES - 1).
+	 */
 	static void SetCompanyIntelligenceSide(CompanyID company, uint8_t side);
+
+	/**
+	 * Get the intelligence side affiliation of the local client company.
+	 * @return Side index of local company.
+	 */
 	static uint8_t GetLocalIntelligenceSide();
 
 	/* Authoritative visibility queries */
+
+	/**
+	 * Query fog of war visibility status of a tile for a specific side.
+	 * @param side Side index.
+	 * @param tile Tile to query.
+	 * @return FogStatus of the specified tile.
+	 */
 	static FogStatus GetTileFogStatus(uint8_t side, TileIndex tile);
+
+	/**
+	 * Check if a tile is currently in active scouting radius of a side's units.
+	 * @param side Side index.
+	 * @param tile Tile to query.
+	 * @return True if currently visible, false otherwise.
+	 */
 	static bool IsTileCurrentlyVisible(uint8_t side, TileIndex tile);
+
+	/**
+	 * Check if a tile has ever been scouted by a side.
+	 * @param side Side index.
+	 * @param tile Tile to query.
+	 * @return True if previously or currently scouted, false if never scouted.
+	 */
 	static bool IsTileScouted(uint8_t side, TileIndex tile);
 
+	/**
+	 * Query fog of war visibility status of a tile for the local company.
+	 * @param tile Tile to query.
+	 * @return FogStatus for the local company's side.
+	 */
 	static FogStatus GetTileFogStatusForLocal(TileIndex tile);
+
+	/**
+	 * Check if a tile is currently visible to the local company.
+	 * @param tile Tile to query.
+	 * @return True if currently visible, false otherwise.
+	 */
 	static bool IsTileCurrentlyVisibleForLocal(TileIndex tile);
 
 	/* Vehicle visibility rules */
+
+	/**
+	 * Check if a vehicle should be hidden behind fog for a specific side.
+	 * @param side Side index observing.
+	 * @param v Vehicle to evaluate.
+	 * @return True if vehicle should be hidden, false if visible.
+	 */
 	static bool ShouldHideVehicle(uint8_t side, const Vehicle *v);
+
+	/**
+	 * Check if a vehicle should be hidden behind fog for the local client.
+	 * @param v Vehicle to evaluate.
+	 * @return True if vehicle should be hidden, false if visible.
+	 */
 	static bool ShouldHideVehicleForLocal(const Vehicle *v);
 
 	/* Scouting and observation */
+
+	/**
+	 * Update tile visibility and contacts scouted by a specific military aircraft.
+	 * @param aircraft Aircraft performing scouting.
+	 */
 	static void UpdateAircraftScouting(DisasterVehicle *aircraft);
+
+	/**
+	 * Recalculate dynamic tile visibility across all military sides and active aircraft.
+	 */
 	static void UpdateAllVisibility();
+
+	/**
+	 * Refresh stationary snapshot data for a specific tile.
+	 * @param side Side index.
+	 * @param tile Tile to refresh snapshot for.
+	 */
 	static void RefreshStationarySnapshot(uint8_t side, TileIndex tile);
 
 	/* Targeting and exploration */
+
+	/**
+	 * Find nearest known enemy contact for an aircraft from remembered contacts.
+	 * @param aircraft Searching aircraft.
+	 * @return Pointer to nearest contact, or nullptr if none known.
+	 */
 	static const MilitaryContact *FindNearestEligibleEnemyContact(const DisasterVehicle *aircraft);
+
+	/**
+	 * Find nearest never-scouted tile on the map for autonomous exploration.
+	 * @param aircraft Searching aircraft.
+	 * @return TileIndex of nearest never-scouted tile, or INVALID_TILE if map fully scouted.
+	 */
 	static TileIndex FindNearestNeverScoutedTile(const DisasterVehicle *aircraft);
+
+	/**
+	 * Check arrival at a target contact location and remove contact if target is absent.
+	 * @param aircraft Arriving aircraft.
+	 * @return True if contact was cleared, false otherwise.
+	 */
 	static bool CheckArrivalAndClearEmptyContact(DisasterVehicle *aircraft);
 
 	/* UI snapshot inspection access */
+
+	/**
+	 * Access side intelligence state structure.
+	 * @param side Side index.
+	 * @return Reference to SideIntelligence structure.
+	 */
 	static SideIntelligence &GetSideIntelligence(uint8_t side);
+
+	/**
+	 * Get stored snapshot of a town for a specific side.
+	 * @param side Side index.
+	 * @param town Town ID.
+	 * @return Pointer to snapshot, or nullptr if not available.
+	 */
 	static const TownSnapshot *GetTownSnapshot(uint8_t side, TownID town);
+
+	/**
+	 * Get stored snapshot of an industry for a specific side.
+	 * @param side Side index.
+	 * @param industry Industry ID.
+	 * @return Pointer to snapshot, or nullptr if not available.
+	 */
 	static const IndustrySnapshot *GetIndustrySnapshot(uint8_t side, IndustryID industry);
 
 	/* Save / Load */
+
+	/**
+	 * Save military fog chunk data.
+	 */
 	static void Save();
+
+	/**
+	 * Load military fog chunk data.
+	 */
 	static void Load();
+
+	/**
+	 * Reconstruct tile visibility post-load.
+	 * @param refresh_unseen Optional flag to refresh unseen snapshots.
+	 */
 	static void ReconstructVisibility(bool refresh_unseen = false);
 };
 
@@ -126,12 +277,20 @@ public:
  */
 class ActiveSnapshotScope {
 private:
-	Tile::TileBase *prev_base = nullptr;
-	Tile::TileExtended *prev_extended = nullptr;
-	bool active = false;
+	Tile::TileBase *prev_base = nullptr;         ///< Original base tile pointer.
+	Tile::TileExtended *prev_extended = nullptr; ///< Original extended tile pointer.
+	bool active = false;                         ///< Whether buffer swap is currently active.
 
 public:
+	/**
+	 * Construct scope and swap active map buffers to the given side's snapshot.
+	 * @param side Side index to inspect.
+	 */
 	ActiveSnapshotScope(uint8_t side);
+
+	/**
+	 * Destruct scope and restore active map buffers.
+	 */
 	~ActiveSnapshotScope();
 };
 

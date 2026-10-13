@@ -3562,13 +3562,14 @@ bool VehicleClicked(const GUIVehicleGroup &vehgroup)
 
 void StopGlobalFollowVehicle(const Vehicle *v)
 {
-	Window *w = GetMainWindow();
-	if (w->viewport->follow_vehicle == v->index) {
+	Window *w = FindWindowById(WindowClass::MainWindow, 0);
+	if (w != nullptr && w->viewport != nullptr && w->viewport->follow_vehicle == v->index) {
 		const Vehicle *moving_front = v->GetMovingFront();
 		ScrollMainWindowTo(moving_front->x_pos, moving_front->y_pos, moving_front->z_pos, true); // lock the main view on the vehicle's last position
 		w->viewport->CancelFollow(*w);
 	}
 }
+
 
 
 /**

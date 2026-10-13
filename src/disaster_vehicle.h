@@ -30,6 +30,16 @@ enum DisasterSubType : uint8_t {
 	ST_BIG_UFO_DESTROYER_SHADOW, ///< Shadow of the aircraft.
 	ST_SMALL_SUBMARINE,          ///< Small submarine, pops up in the oceans but doesn't do anything
 	ST_BIG_SUBMARINE,            ///< Big submarine, pops up in the oceans but doesn't do anything
+	ST_MILITARY_AIRCRAFT,        ///< Autonomous military aircraft.
+	ST_MILITARY_AIRCRAFT_SHADOW, ///< Shadow of the military aircraft.
+	ST_MILITARY_TARGET_MARKER,   ///< Fixed military target marker.
+};
+
+/** Military movement state for autonomous military units. */
+enum MilitaryMovementState : uint8_t {
+	MMS_IDLE = 0,    ///< Idle (no targets or waiting).
+	MMS_MOVING = 1,  ///< Moving straight towards current target.
+	MMS_ARRIVED = 2, ///< Arrived at target marker.
 };
 
 /**
@@ -54,6 +64,17 @@ struct DisasterVehicle final : public SpecializedVehicle<DisasterVehicle, Vehicl
 	void UpdateDeltaXY() override;
 	void UpdateImage();
 	bool Tick() override;
+
+	uint8_t GetMilitarySide() const { return GB(this->state, 8, 8); }
+	void SetMilitarySide(uint8_t side) { SB(this->state, 8, 8, side); }
+	MilitaryMovementState GetMilitaryMovementState() const { return (MilitaryMovementState)GB(this->state, 0, 8); }
+	void SetMilitaryMovementState(MilitaryMovementState mms) { SB(this->state, 0, 8, (uint8_t)mms); }
 };
+
+DisasterVehicle *SpawnMilitaryAircraft(int x, int y, Direction dir, uint8_t side);
+DisasterVehicle *SpawnMilitaryTargetMarker(int x, int y, uint8_t side);
+DisasterVehicle *FindNearestEligibleEnemyMarker(const DisasterVehicle *aircraft);
+void SetupMilitaryScenario();
+void MaybeSetupMilitaryScenario();
 
 #endif /* DISASTER_VEHICLE_H */

@@ -106,6 +106,8 @@ static constexpr DirectionIndexArray<SpriteID> _disaster_images_7{SPR_XCOM_SKYRA
 static constexpr DirectionIndexArray<SpriteID> _disaster_images_8{SPR_AH_64A, SPR_AH_64A, SPR_AH_64A, SPR_AH_64A, SPR_AH_64A, SPR_AH_64A, SPR_AH_64A, SPR_AH_64A};
 /** Sprites for combat helicopter rotor */
 static constexpr DirectionIndexArray<SpriteID> _disaster_images_9{SPR_ROTOR_MOVING_1, SPR_ROTOR_MOVING_1, SPR_ROTOR_MOVING_1, SPR_ROTOR_MOVING_1, SPR_ROTOR_MOVING_1, SPR_ROTOR_MOVING_1, SPR_ROTOR_MOVING_1, SPR_ROTOR_MOVING_1};
+/** Sprites for military target marker */
+static constexpr DirectionIndexArray<SpriteID> _disaster_images_target_marker{SPR_TRANSMITTER, SPR_TRANSMITTER, SPR_TRANSMITTER, SPR_TRANSMITTER, SPR_TRANSMITTER, SPR_TRANSMITTER, SPR_TRANSMITTER, SPR_TRANSMITTER};
 
 /** Sprites for each disaster vehicle. */
 static constexpr DirectionIndexArray<SpriteID> _disaster_images[] = {
@@ -116,6 +118,8 @@ static constexpr DirectionIndexArray<SpriteID> _disaster_images[] = {
 	_disaster_images_6, _disaster_images_6,                     ///< big ufo and shadow
 	_disaster_images_7, _disaster_images_7,                     ///< skyranger and shadow
 	_disaster_images_4, _disaster_images_5,                     ///< small and big submarine sprites
+	_disaster_images_3, _disaster_images_3,                     ///< military aircraft and shadow
+	_disaster_images_target_marker,                             ///< military target marker
 };
 
 void DisasterVehicle::UpdateImage()
@@ -123,6 +127,11 @@ void DisasterVehicle::UpdateImage()
 	SpriteID img = this->image_override;
 	if (img == 0) img = _disaster_images[this->subtype][this->direction];
 	this->sprite_cache.sprite_seq.Set(img);
+	if (this->subtype == ST_MILITARY_AIRCRAFT || this->subtype == ST_MILITARY_TARGET_MARKER) {
+		uint8_t side = this->GetMilitarySide();
+		PaletteID pal = (side == 0) ? PALETTE_TO_BLUE : PALETTE_TO_RED;
+		this->sprite_cache.sprite_seq.seq[0].pal = pal;
+	}
 }
 
 /**
@@ -148,6 +157,7 @@ DisasterVehicle::DisasterVehicle(VehicleID index, int x, int y, Direction direct
 		case ST_HELICOPTER:
 		case ST_BIG_UFO:
 		case ST_BIG_UFO_DESTROYER:
+		case ST_MILITARY_AIRCRAFT:
 			GetAircraftFlightLevelBounds(this, &this->z_pos, nullptr);
 			break;
 
@@ -158,7 +168,8 @@ DisasterVehicle::DisasterVehicle(VehicleID index, int x, int y, Direction direct
 
 		case ST_SMALL_SUBMARINE:
 		case ST_BIG_SUBMARINE:
-			this->z_pos = 0;
+		case ST_MILITARY_TARGET_MARKER:
+			this->z_pos = GetSlopePixelZ(x, y);
 			break;
 
 		case ST_ZEPPELINER_SHADOW:
@@ -167,6 +178,7 @@ DisasterVehicle::DisasterVehicle(VehicleID index, int x, int y, Direction direct
 		case ST_HELICOPTER_SHADOW:
 		case ST_BIG_UFO_SHADOW:
 		case ST_BIG_UFO_DESTROYER_SHADOW:
+		case ST_MILITARY_AIRCRAFT_SHADOW:
 			this->z_pos = 0;
 			this->vehstatus.Set(VehState::Shadow);
 			break;
@@ -720,6 +732,100 @@ static bool DisasterTick_NULL([[maybe_unused]] DisasterVehicle *v)
 }
 
 /**
+ * Find the nearest eligible enemy target marker for a military aircraft.
+ * Eligible: ST_MILITARY_TARGET_MARKER, different military side, not crashed.
+ * Deterministic tie-breaking: when distances are equal, selects lower VehicleID.
+ */
+DisasterVehicle *FindNearestEligibleEnemyMarker(const DisasterVehicle *aircraft)
+{
+	uint8_t my_side = aircraft->GetMilitarySide();
+	DisasterVehicle *best_marker = nullptr;
+	uint64_t best_dist = UINT64_MAX;
+
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype != ST_MILITARY_TARGET_MARKER) continue;
+		if (v->GetMilitarySide() == my_side) continue; // Ineligible: friendly marker
+		if (v->vehstatus.Test(VehState::Crashed)) continue; // Ineligible: crashed/destroyed
+
+		int64_t dx = (int64_t)aircraft->x_pos - v->x_pos;
+		int64_t dy = (int64_t)aircraft->y_pos - v->y_pos;
+		uint64_t dist = dx * dx + dy * dy;
+
+		if (dist < best_dist) {
+			best_dist = dist;
+			best_marker = v;
+		} else if (dist == best_dist && best_marker != nullptr) {
+			/* Deterministic tie-breaking: prefer lower VehicleID */
+			if (v->index < best_marker->index) {
+				best_marker = v;
+			}
+		}
+	}
+	return best_marker;
+}
+
+/** Autonomous military aircraft tick handling. @copydoc DisasterVehicleTickProc */
+static bool DisasterTick_MilitaryAircraft(DisasterVehicle *v)
+{
+	v->tick_counter++;
+
+	DisasterVehicle *target = nullptr;
+	if (v->big_ufo_destroyer_target != VehicleID::Invalid()) {
+		target = DisasterVehicle::GetIfValid(v->big_ufo_destroyer_target);
+		if (target != nullptr) {
+			/* Verify target is still an eligible enemy marker */
+			if (target->subtype != ST_MILITARY_TARGET_MARKER ||
+					target->GetMilitarySide() == v->GetMilitarySide() ||
+					target->vehstatus.Test(VehState::Crashed)) {
+				target = nullptr;
+			}
+		}
+	}
+
+	if (target == nullptr) {
+		/* Current target is invalid, removed, or not set. Search for nearest eligible enemy marker. */
+		target = FindNearestEligibleEnemyMarker(v);
+		if (target != nullptr) {
+			v->big_ufo_destroyer_target = target->index;
+			v->SetMilitaryMovementState(MMS_MOVING);
+		} else {
+			/* Bounded handling of no targets: idle in place */
+			v->big_ufo_destroyer_target = VehicleID::Invalid();
+			v->SetMilitaryMovementState(MMS_IDLE);
+			return true;
+		}
+	}
+
+	/* Bounded handling of arrival */
+	int dist_x = std::abs(target->x_pos - v->x_pos);
+	int dist_y = std::abs(target->y_pos - v->y_pos);
+	if (dist_x + dist_y <= 8) {
+		v->SetMilitaryMovementState(MMS_ARRIVED);
+		return true;
+	}
+
+	/* Turn towards the target */
+	v->direction = GetDirectionTowards(v, target->x_pos, target->y_pos);
+	v->SetMilitaryMovementState(MMS_MOVING);
+
+	GetNewVehiclePosResult gp = GetNewVehiclePos(v);
+
+	/* Bounded handling of map edges: clamp within map boundaries */
+	gp.x = Clamp(gp.x, 0, (int)(Map::MaxX() * TILE_SIZE));
+	gp.y = Clamp(gp.y, 0, (int)(Map::MaxY() * TILE_SIZE));
+
+	v->UpdatePosition(gp.x, gp.y, GetAircraftFlightLevel(v));
+
+	return true;
+}
+
+/** Fixed military target marker tick handling. @copydoc DisasterVehicleTickProc */
+static bool DisasterTick_MilitaryTargetMarker([[maybe_unused]] DisasterVehicle *v)
+{
+	return true;
+}
+
+/**
  * Perform any actions for a given vehicle.
  * @param v The vehicle to check.
  * @return \c true iff the vehicle still exists, i.e. has not been destroyed.
@@ -727,14 +833,16 @@ static bool DisasterTick_NULL([[maybe_unused]] DisasterVehicle *v)
 using DisasterVehicleTickProc = bool(DisasterVehicle *v);
 
 static DisasterVehicleTickProc * const _disastervehicle_tick_procs[] = {
-	DisasterTick_Zeppeliner, DisasterTick_NULL,
-	DisasterTick_Ufo,        DisasterTick_NULL,
-	DisasterTick_Airplane,   DisasterTick_NULL,
-	DisasterTick_Helicopter, DisasterTick_NULL, DisasterTick_Helicopter_Rotors,
-	DisasterTick_Big_Ufo,    DisasterTick_NULL, DisasterTick_Big_Ufo_Destroyer,
+	DisasterTick_Zeppeliner,        DisasterTick_NULL,
+	DisasterTick_Ufo,               DisasterTick_NULL,
+	DisasterTick_Airplane,          DisasterTick_NULL,
+	DisasterTick_Helicopter,        DisasterTick_NULL, DisasterTick_Helicopter_Rotors,
+	DisasterTick_Big_Ufo,           DisasterTick_NULL, DisasterTick_Big_Ufo_Destroyer,
 	DisasterTick_NULL,
 	DisasterTick_Submarine,
 	DisasterTick_Submarine,
+	DisasterTick_MilitaryAircraft,  DisasterTick_NULL,
+	DisasterTick_MilitaryTargetMarker,
 };
 
 
@@ -1026,4 +1134,70 @@ void ReleaseDisasterVehicle(VehicleID vehicle)
 void DisasterVehicle::UpdateDeltaXY()
 {
 	this->bounds = {{-1, -1, 0}, {2, 2, 5}, {}};
+}
+
+DisasterVehicle *SpawnMilitaryAircraft(int x, int y, Direction dir, uint8_t side)
+{
+	if (!Vehicle::CanAllocateItem(2)) return nullptr;
+
+	DisasterVehicle *v = DisasterVehicle::Create(x, y, dir, ST_MILITARY_AIRCRAFT);
+	DisasterVehicle *shadow = DisasterVehicle::Create(x, y, dir, ST_MILITARY_AIRCRAFT_SHADOW);
+	v->SetNext(shadow);
+	v->SetMilitarySide(side);
+	v->SetMilitaryMovementState(MMS_IDLE);
+	v->big_ufo_destroyer_target = VehicleID::Invalid();
+	v->UpdateImage();
+	return v;
+}
+
+DisasterVehicle *SpawnMilitaryTargetMarker(int x, int y, uint8_t side)
+{
+	if (!Vehicle::CanAllocateItem(1)) return nullptr;
+
+	DisasterVehicle *v = DisasterVehicle::Create(x, y, Direction::N, ST_MILITARY_TARGET_MARKER);
+	v->SetMilitarySide(side);
+	v->UpdateImage();
+	return v;
+}
+
+void SetupMilitaryScenario()
+{
+	/* Remove existing military units/markers if any */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT ||
+				v->subtype == ST_MILITARY_AIRCRAFT_SHADOW ||
+				v->subtype == ST_MILITARY_TARGET_MARKER) {
+			delete v;
+		}
+	}
+
+	uint max_x = Map::MaxX() * TILE_SIZE;
+	uint max_y = Map::MaxY() * TILE_SIZE;
+	if (max_x < 100 * TILE_SIZE || max_y < 100 * TILE_SIZE) return;
+
+	/* Fixed fixture:
+	 * Friendly marker (Side 0) at (80, 100).
+	 * Nearest enemy marker (Side 1) at (140, 100) (straight line east).
+	 * Farther enemy marker (Side 1) at (180, 120).
+	 * Aircraft on Side 0 starting at tile (100, 100) facing east.
+	 */
+	SpawnMilitaryTargetMarker(80 * TILE_SIZE, 100 * TILE_SIZE, 0);
+	SpawnMilitaryTargetMarker(140 * TILE_SIZE, 100 * TILE_SIZE, 1);
+	SpawnMilitaryTargetMarker(180 * TILE_SIZE, 120 * TILE_SIZE, 1);
+
+	SpawnMilitaryAircraft(100 * TILE_SIZE, 100 * TILE_SIZE, Direction::E, 0);
+}
+
+void MaybeSetupMilitaryScenario()
+{
+	bool has_military = false;
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT || v->subtype == ST_MILITARY_TARGET_MARKER) {
+			has_military = true;
+			break;
+		}
+	}
+	if (!has_military && Map::SizeX() == 256 && Map::SizeY() == 256 && Town::GetNumItems() == 20) {
+		SetupMilitaryScenario();
+	}
 }

@@ -5,7 +5,14 @@
  StepTick:            2
  PlaneSpeedValid:     true
  PlaneSpeedValue:     2
- CivilianBaseline:    OK
+ TownCount:           20
+ FirstTownName:       Wrunfingbridge
+ FirstTownPop:        1016
+ IndustryCount:       47
+ MapSizeX:            256
+ MapSizeY:            256
+ CargoTypeCount:      11
+ CompanyFirstResolved:0
 
 Done...
 

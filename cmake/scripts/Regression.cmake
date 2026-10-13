@@ -14,8 +14,14 @@ if(NOT OPENTTD_EXECUTABLE)
     message(FATAL_ERROR "Script needs OPENTTD_EXECUTABLE defined (tip: use -DOPENTTD_EXECUTABLE=..)")
 endif()
 
+if(NOT EXISTS ${OPENTTD_EXECUTABLE})
+    message(FATAL_ERROR "OpenTTD executable ${OPENTTD_EXECUTABLE} does not exist")
+endif()
 if(NOT EXISTS ${SCRIPT_FOLDER}/${REGRESSION_TEST}/test.sav)
     message(FATAL_ERROR "Regression test ${REGRESSION_TEST} does not exist (tip: check regression folder for the correct spelling)")
+endif()
+if(NOT EXISTS ${SCRIPT_FOLDER}/${REGRESSION_TEST}/result.txt)
+    message(FATAL_ERROR "Regression expected result ${SCRIPT_FOLDER}/${REGRESSION_TEST}/result.txt does not exist")
 endif()
 if(NOT EXISTS regression/regression.cfg)
     message(FATAL_ERROR "Regression configuration regression/regression.cfg does not exist (tip: ensure regression_files target ran)")
@@ -37,6 +43,10 @@ if(CRASH_FILES)
     file(REMOVE ${CRASH_FILES})
 endif()
 
+if(NOT REGRESSION_TIMEOUT)
+    set(REGRESSION_TIMEOUT 60)
+endif()
+
 # Run the regression test
 execute_process(COMMAND ${OPENTTD_EXECUTABLE}
                         -x
@@ -49,8 +59,18 @@ execute_process(COMMAND ${OPENTTD_EXECUTABLE}
                         -Q
                 OUTPUT_VARIABLE REGRESSION_OUTPUT
                 ERROR_VARIABLE REGRESSION_RESULT
+                RESULT_VARIABLE REGRESSION_EXIT_CODE
+                TIMEOUT ${REGRESSION_TIMEOUT}
                 OUTPUT_STRIP_TRAILING_WHITESPACE
 )
+
+if(REGRESSION_EXIT_CODE MATCHES "[Tt]imeout")
+    message(FATAL_ERROR "OpenTTD timed out after ${REGRESSION_TIMEOUT} seconds")
+endif()
+
+if(NOT REGRESSION_EXIT_CODE STREQUAL "0")
+    message(FATAL_ERROR "OpenTTD process failed with exit code: ${REGRESSION_EXIT_CODE}")
+endif()
 
 # Detect any crash
 file(GLOB CRASH_FILES "regression/crash*.log")

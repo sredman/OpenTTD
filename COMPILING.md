@@ -109,7 +109,23 @@ If SDL2 is installed in a custom user prefix:
 cmake .. -G Ninja -DCMAKE_PREFIX_PATH=<prefix>
 ```
 
-### 3. Running Unit Tests
+### 3. Unified Automated Test Gate
+Run the shared fail-closed test gate used both locally and in fork CI:
+
+```bash
+./scripts/gate.sh [build_dir] [gui_build_dir]
+# e.g.:
+./scripts/gate.sh build build-gui
+```
+
+The gate script performs:
+1. Validates build directories and builds required targets (`openttd`, `openttd_test`, `regression_files`, `regression`).
+2. Confirms all required artifacts and fixtures exist (`openttd`, `openttd_test`, `regression.cfg`, `test.sav`).
+3. Executes all test suites via `ctest` with a 60-second timeout, verifying 100% pass rate and expected test count (at least 99 tests).
+4. Runs bounded headless dedicated smoke simulation (`-vnull:ticks=500 -snull -mnull -bnull -x -Q`).
+5. Runs bounded graphical client smoke simulation if graphical build exists.
+
+### 4. Running Unit Tests Directly
 Build and run the Catch2 test suite:
 
 ```bash
@@ -119,7 +135,7 @@ ninja openttd_test
 ctest --output-on-failure
 ```
 
-### 4. Running Regression Tests
+### 5. Running Regression Tests Directly
 Run the deterministic GameScript and AI regression suite:
 
 ```bash
@@ -128,11 +144,11 @@ ninja regression_files regression
 ninja regression_aircraft
 ```
 
-### 5. Running Headless Scenario Simulations
+### 6. Running Headless Scenario Simulations
 Execute OpenTTD headless with bounded ticks and no audio/video:
 
 ```bash
-./openttd -x -c regression/regression.cfg -g <save_or_scenario> -snull -mnull -vnull:ticks=<ticks> -d script=2 -Q
+./openttd -x -c regression/regression.cfg -g <save_or_scenario> -snull -mnull -bnull -vnull:ticks=<ticks> -d script=2 -Q
 ```
 
 ## CMake Options

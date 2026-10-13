@@ -205,19 +205,18 @@ You may also want the guide to [compiling OpenTTD](./COMPILING.md).
 Development on the OpenTTD-Wargame fork is carried out by autonomous engineering agents in the Agent Rig fleet.
 
 ### Review and Merge Path
-- Agents own code verification, review, and merging on `sredman/OpenTTD`. Simon does not review code.
+- Agents own code verification and peer review on `sredman/OpenTTD`. Simon does not review code.
 - Work reaches an agent as an issue and leaves as a pull request against `sredman/OpenTTD`.
-- Before merging, the agent must perform due diligence and record all required verification evidence in the pull request.
-- Changes are merged via the authorized agent workflow. Code work is complete only after the corresponding pull request is confirmed merged.
-- Default branch `master` permissions: agents hold administrative/push access to `sredman/OpenTTD`.
+- Branch protection status & settings gap: Branch protection and rulesets are currently unconfigured on `master` (`404 Branch not protected`, rulesets `[]`). Required checks are not automatically enforced by GitHub repository settings.
+- Authorized merge path: PRs remain in review until peer review is complete. Agents do not merge to default branch `master` of `sredman/OpenTTD` without explicit authorization. Code work is complete only after the corresponding pull request is confirmed merged.
 
 ### Required Verification Evidence
 Every change must be accompanied by reproducible evidence:
-1. **Reproducible Builds**: Verified clean compilation for both dedicated server (`-DOPTION_DEDICATED=ON`) and graphical client.
-2. **Automated Unit Tests**: All unit tests in `src/tests/` passing (`openttd_test` via `ctest`).
-3. **Headless Scenario Regressions**: All script regression suites in `regression/` passing (`ninja regression_files regression` / `ctest`).
-4. **Deterministic Simulation & Persistence**: Any new state must verify save/load persistence and bounded execution.
-5. **No Upstream Leaks**: Verified all write destinations and published artifacts target only `sredman/OpenTTD`.
+1. **Automated Test Gate**: Clean execution of the unified fail-closed gate `./scripts/gate.sh`, verifying builds, all unit tests (`openttd_test`), all regression test suites, and bounded smoke runs with 100% pass rate.
+2. **Process Failure & Timeout Enforcement**: Runner must enforce non-zero exit code rejection, execution timeouts, and missing fixture detection.
+3. **Observable Scenario State**: Regressions must assert observable game state (e.g. town counts, industry counts, settings, map dimensions) rather than unconditional strings.
+4. **Deterministic Simulation & Persistence**: New gameplay state must verify save/load round-trip persistence and deterministic ticks (mark N/A if no new state introduced).
+5. **Upstream Isolation**: Verified all write destinations and published artifacts target only `sredman/OpenTTD` (external store uploads and survey participation disabled).
 
 
 ## Project goals

@@ -48,12 +48,12 @@ Describe here
 ## Checklist for review
 
 Some things are not automated, and forgotten often. This list is a reminder for the reviewers.
-* [ ] Repository boundary: Targets `sredman/OpenTTD`; no upstream changes, issues, or comments sent.
-* [ ] Local reproducible build executed (dedicated server and graphical client).
-* [ ] Unit tests pass (`openttd_test` / `ctest`).
-* [ ] Script regressions pass (`ninja regression_files regression`).
-* [ ] Headless scenario determinism and bounded execution verified.
-* [ ] Persistence and savegame compatibility verified for new state.
+* [ ] Repository boundary: Targets `sredman/OpenTTD`; upstream isolation confirmed.
+* [ ] Unified test gate executed (`./scripts/gate.sh`); 100% test pass rate across unit and regression suites.
+* [ ] Process failure & timeout enforcement verified in test runner.
+* [ ] Observable scenario baseline asserted (real entities/state).
+* [ ] Persistence and savegame compatibility verified for new state (or marked N/A if none).
+* [ ] Check names, branch protection status, and merge authorization recorded.
 * The bug fix is important enough to be backported? (label: 'backport requested')
 * This PR touches english.txt or translations? Check the [guidelines](https://github.com/sredman/OpenTTD/blob/master/docs/eints.md)
 * This PR affects the GS/AI API? (label 'needs review: Script API')

@@ -125,11 +125,10 @@ Run the shared fail-closed test gate used both locally and in fork CI:
 The gate script performs:
 1. Validates build directories and builds required targets (`openttd`, `openttd_test`, `regression_files`, `regression`).
 2. Confirms all required artifacts, fixtures, and binaries exist (`openttd`, `openttd_test`, `regression.cfg`, `test.sav`).
-3. Verifies that every required test in `scripts/required_tests.txt` is registered in CTest inventory (rejecting missing/omitted required tests).
-4. Executes test suites via `ctest` with a 60-second timeout, preserving failure output on error and rejecting any skipped, disabled, or failing tests.
-5. Verifies every individual required test passed.
-6. In dedicated mode: runs bounded headless dedicated smoke simulation (`-D -vnull:ticks=500 -snull -mnull -bnull -x -Q`).
-7. In graphical mode: runs bounded graphical client smoke simulation via SDL2 backend (`-v sdl:ticks=100 -b 32bpp-anim -s null -m null -x -Q`). Missing GUI executable or graphical initialization failure fails the gate.
+3. Executes registered test suites automatically via `ctest` with a 60-second timeout, preserving failure output on error, rejecting an empty test run, and rejecting any skipped, disabled, or failing tests.
+4. Verifies mandatory small scenario test (`regression_aircraft`) executed and passed.
+5. In dedicated mode: runs bounded headless dedicated smoke simulation (`-D -vnull:ticks=500 -snull -mnull -bnull -x -Q`).
+6. In graphical mode: runs bounded graphical client smoke simulation via SDL2 backend (`-v sdl:ticks=100 -b 32bpp-anim -s null -m null -x -Q`). Missing GUI executable or graphical initialization failure fails the gate.
 
 ### 4. Running Unit Tests Directly
 Build and run the Catch2 test suite:

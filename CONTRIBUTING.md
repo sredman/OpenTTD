@@ -210,7 +210,10 @@ Development on the OpenTTD-Wargame fork is carried out by autonomous engineering
 - **Merge Authorization (Authorized 2026-10-13)**: Agent-owned review and merge on `sredman/OpenTTD` is explicitly authorized. Leonardo owns acceptance review; Lohgock owns implementation and executes merge to `sredman/OpenTTD:master` using authorized credentials after Leonardo accepts the tested head and required checks pass.
 - **Branch Protection & Pre-Merge Verification**: GitHub branch protection is currently absent on `master` (`404 Branch not protected`, rulesets `[]`). Status checks are not repository-enforced. Until repository enforcement is available, the authorized merge procedure requires the merging agent to explicitly verify:
   1. The accepted head SHA matches the PR head.
-  2. All named required checks have completed and passed (`Linux (GCC - Dedicated) / CI`, `Linux (GCC - SDL2) / CI`, `Linux (Clang) / CI`, `Windows (x64) / CI`, `Windows (x86) / CI`, `Mac OS (arm64 - Debug) / CI`, `Mac OS (arm64 - Release) / CI`, `Emscripten / CI`, `CodeQL`, checkers).
+  2. All named required checks have completed and passed:
+     - `CI - Build` matrix jobs: `Linux (GCC - Dedicated) / CI`, `Linux (GCC - SDL2) / CI`, `Linux (Clang) / CI`, `Windows (x64) / CI`, `Windows (x86) / CI`, `Mac OS (arm64 - Debug) / CI`, `Mac OS (arm64 - Release) / CI`, `Emscripten / CI`
+     - `CodeQL`: `Analyze`
+     - Repository Linters & Validators: `Commit checker` (workflow `Commit checker`), `New doxygen warnings checker` (workflow `Docs checker`), `File descriptions` (workflow `File descriptions`), `Script missing mode enforcement` (workflow `Script missing mode enforcement`), `Unused strings` (workflow `Unused strings`), `main` (workflow `Update 'work: needs rebase' label status`).
   3. The current target branch is `master`.
   4. The merged state is confirmed after merge before closing the issue.
 

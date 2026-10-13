@@ -15,6 +15,9 @@ on:
       extra-cmake-parameters:
         required: true
         type: string
+      gate-mode:
+        required: true
+        type: string
 
 env:
   CTEST_OUTPUT_ON_FAILURE: 1
@@ -106,7 +109,7 @@ jobs:
 
     - name: Test Gate
       run: |
-        ./scripts/gate.sh build
+        ./scripts/gate.sh --mode "${{ inputs.gate-mode }}" build
 
         # Re-enable vcpkg.
         mv vcpkg-disabled.json vcpkg.json

@@ -76,19 +76,33 @@ run_gate_for_build() {
   echo "=== [Gate] Verifying Required Test Inventory in CTest ==="
   local ctest_inventory
   ctest_inventory=$(ctest --test-dir "${target_dir}" -N)
-  local missing_tests=0
-  while IFS= read -r test_name || [ -n "${test_name}" ]; do
-    [ -z "${test_name}" ] && continue
-    if ! echo "${ctest_inventory}" | grep -Fq ": ${test_name}"; then
-      echo "ERROR: Required test '${test_name}' is missing from CTest inventory in ${target_dir}!" >&2
-      missing_tests=$((missing_tests + 1))
-    fi
-  done < "${MANIFEST}"
-
-  if [ "${missing_tests}" -gt 0 ]; then
-    echo "ERROR: ${missing_tests} required tests were not registered in CTest!" >&2
-    exit 1
-  fi
+  printf '%s\n' "${ctest_inventory}" | awk -v manifest="${MANIFEST}" '
+  BEGIN {
+    while ((getline line < manifest) > 0) {
+      gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", line)
+      if (line != "") required[line] = 1
+    }
+    close(manifest)
+  }
+  /^[ \t]*Test[ \t]+#[0-9]+:[ \t]+/ {
+    sub(/^[ \t]*Test[ \t]+#[0-9]+:[ \t]+/, "")
+    gsub(/[ \t\r\n]+$/, "")
+    found[$0] = 1
+  }
+  END {
+    missing = 0
+    for (name in required) {
+      if (!(name in found)) {
+        print "ERROR: Required test \x27" name "\x27 is missing from CTest inventory in target dir!" > "/dev/stderr"
+        missing++
+      }
+    }
+    if (missing > 0) {
+      print "ERROR: " missing " required tests were not registered in CTest!" > "/dev/stderr"
+      exit 1
+    }
+  }
+  '
 
   echo "=== [Gate] Executing Test Suites via CTest (Fail-Closed) ==="
   set +e
@@ -104,19 +118,52 @@ run_gate_for_build() {
     exit ${ctest_exit}
   fi
 
-  if echo "${ctest_output}" | grep -E -q " (Skipped|Disabled|\*\*\*Failed|\*\*\*Timeout|\*\*\*Exception)"; then
+  if echo "${ctest_output}" | grep -E -q "(\*\*\*Skipped|\*\*\*Failed|\*\*\*Timeout|\*\*\*Exception|\*\*\*Not Run|[[:space:]]Disabled|[[:space:]]Skipped)"; then
     echo "ERROR: Test execution contained skipped, disabled, or failing tests!" >&2
     exit 1
   fi
 
   echo "=== [Gate] Verifying Every Required Test Succeeded ==="
-  while IFS= read -r test_name || [ -n "${test_name}" ]; do
-    [ -z "${test_name}" ] && continue
-    if ! echo "${ctest_output}" | grep -F "${test_name}" | grep -q "Passed"; then
-      echo "ERROR: Required test '${test_name}' was not executed or did not pass in ${target_dir}!" >&2
-      exit 1
-    fi
-  done < "${MANIFEST}"
+  printf '%s\n' "${ctest_output}" | awk -v manifest="${MANIFEST}" '
+  BEGIN {
+    while ((getline line < manifest) > 0) {
+      gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", line)
+      if (line != "") required[line] = 1
+    }
+    close(manifest)
+  }
+  /^[ \t]*[0-9]+\/[0-9]+[ \t]+Test[ \t]+#[0-9]+:[ \t]+/ {
+    sub(/^[ \t]*[0-9]+\/[0-9]+[ \t]+Test[ \t]+#[0-9]+:[ \t]+/, "")
+    if (match($0, /[ \t]+\.+[ \t]+[^ \t]+[ \t]+[0-9.]+[ \t]*sec/)) {
+      tail = substr($0, RSTART)
+      name = substr($0, 1, RSTART - 1)
+      gsub(/[ \t\r\n]+$/, "", name)
+      sub(/^[ \t]+\.+[ \t]+/, "", tail)
+      split(tail, parts, /[ \t]+/)
+      status = parts[1]
+      results[name] = status
+    }
+  }
+  END {
+    err = 0
+    for (name in results) {
+      if (results[name] != "Passed") {
+        print "ERROR: Test \x27" name "\x27 did not pass (status: " results[name] ")!" > "/dev/stderr"
+        err = 1
+      }
+    }
+    for (name in required) {
+      if (!(name in results)) {
+        print "ERROR: Required test \x27" name "\x27 was not executed!" > "/dev/stderr"
+        err = 1
+      } else if (results[name] != "Passed") {
+        print "ERROR: Required test \x27" name "\x27 failed with status: " results[name] > "/dev/stderr"
+        err = 1
+      }
+    }
+    if (err > 0) exit 1
+  }
+  '
 
   if [ "${target_mode}" = "dedicated" ]; then
     echo "=== [Gate] Running Dedicated Headless Smoke Simulation (500 ticks) ==="

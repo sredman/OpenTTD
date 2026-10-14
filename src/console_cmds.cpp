@@ -64,12 +64,17 @@ static uint _script_current_depth; ///< Depth of scripts running (used to abort 
 /* Scheduled execution handling. */
 static std::string _scheduled_monthly_script; ///< Script scheduled to execute by the 'schedule' console command (empty if no script is scheduled).
 
+/**
+ * Stored scheduled command to execute after a given number of game ticks.
+ */
 struct ScheduledTickCommand {
-	uint32_t ticks_remaining;
-	std::string command;
+	uint32_t ticks_remaining; ///< Number of game ticks remaining before execution.
+	std::string command;      ///< Console command string to execute.
 };
+/** List of scheduled tick commands awaiting execution. */
 static std::vector<ScheduledTickCommand> _scheduled_tick_commands;
 
+/** Interval timer executing scheduled tick commands every game tick. */
 static const IntervalTimer<TimerGameTick> _scheduled_tick_timer = {{TimerGameTick::Priority::None, 1}, [](auto) {
 	if (_scheduled_tick_commands.empty()) return;
 
@@ -3053,33 +3058,6 @@ static bool ConScheduleTicks(std::span<std::string_view> argv)
 	return true;
 }
 
-/** Order military aircraft command. @copydoc IConsoleCmdProc */
-static bool ConOrderMilitaryAircraft(std::span<std::string_view> argv)
-{
-	if (argv.size() < 3) {
-		IConsolePrint(CC_HELP, "Order military aircraft to fly towards tile. Usage: 'order_military_aircraft <tile_x> <tile_y>'.");
-		return false;
-	}
-	auto x = ParseType<int>(argv[1]);
-	auto y = ParseType<int>(argv[2]);
-	if (!x.has_value() || !y.has_value()) return false;
-	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
-		if (v->subtype == ST_MILITARY_AIRCRAFT) {
-			v->big_ufo_destroyer_target = VehicleID::Invalid();
-			v->ordered_dest = TileXY(Clamp(*x, 0, (int)Map::MaxX()), Clamp(*y, 0, (int)Map::MaxY()));
-			v->dest_tile = v->ordered_dest;
-			v->SetMilitaryMovementState(MMS_MOVING);
-			v->age = TimerGameCalendar::Date{0};
-			IConsolePrint(CC_DEFAULT, "Military aircraft ordered to ({}, {}).", *x, *y);
-			return true;
-		}
-	}
-	IConsolePrint(CC_DEFAULT, "No military aircraft found.");
-	return false;
-}
-
-
-/** Print military aircraft and marker status. @copydoc IConsoleCmdProc */
 /** Follow military aircraft command. @copydoc IConsoleCmdProc */
 static bool ConFollowMilitaryAircraft([[maybe_unused]] std::span<std::string_view> argv)
 {
@@ -3108,12 +3086,11 @@ static bool ConPrintMilitaryStatus([[maybe_unused]] std::span<std::string_view> 
 	}
 	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
 		if (v->subtype == ST_MILITARY_AIRCRAFT) {
-			Debug(Facility::Console, Severity::Error, "STATUS AIRCRAFT: pos=({}, {}), tile=({}, {}), z={}, coord=({}, {}, {}, {}), sprite_count={}, sprite={}, state={}, target={}",
+			Debug(Facility::Console, Severity::Error, "STATUS AIRCRAFT: pos=({}, {}), tile=({}, {}), z={}, dest=({}, {}), dir={}, state={}, target={}",
 				v->x_pos, v->y_pos, TileX(v->tile), TileY(v->tile), v->z_pos,
-				v->coord.left, v->coord.top, v->coord.right, v->coord.bottom,
-				v->sprite_cache.sprite_seq.count,
-				v->sprite_cache.sprite_seq.count > 0 ? v->sprite_cache.sprite_seq.seq[0].sprite : 0,
-				(int)v->GetMilitaryMovementState(), v->big_ufo_destroyer_target.base());
+				v->dest_tile != INVALID_TILE ? (int)TileX(v->dest_tile) : -1,
+				v->dest_tile != INVALID_TILE ? (int)TileY(v->dest_tile) : -1,
+				(int)v->direction, (int)v->GetMilitaryMovementState(), v->big_ufo_destroyer_target.base());
 		} else if (v->subtype == ST_MILITARY_AIRCRAFT_SHADOW) {
 			Debug(Facility::Console, Severity::Error, "STATUS SHADOW: pos=({}, {}), tile=({}, {}), z={}, coord=({}, {}, {}, {}), sprite_count={}, sprite={}",
 				v->x_pos, v->y_pos, TileX(v->tile), TileY(v->tile), v->z_pos,
@@ -3278,6 +3255,5 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("setup_military_scenario", ConSetupMilitaryScenario);
 	IConsole::CmdRegister("reset_military_scenario", ConResetMilitaryScenario);
 	IConsole::CmdRegister("relocate_military_aircraft", ConRelocateMilitaryAircraft);
-	IConsole::CmdRegister("order_military_aircraft", ConOrderMilitaryAircraft);
 	IConsole::CmdRegister("follow_military_aircraft", ConFollowMilitaryAircraft);
 }

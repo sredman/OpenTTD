@@ -761,6 +761,35 @@ DisasterVehicle *FindNearestEligibleEnemyMarker(const DisasterVehicle *aircraft)
 	return best_marker;
 }
 
+/**
+ * Determine the 8-sector Direction towards a relative offset (dx, dy).
+ * Each of the 8 directions covers a 45-degree sector centered on that direction.
+ * @param dx          Relative X pixel delta.
+ * @param dy          Relative Y pixel delta.
+ * @param current_dir Current direction fallback if delta is zero.
+ * @return Best matching 8-sector Direction.
+ */
+static Direction GetMilitaryDirectionTowards(int dx, int dy, Direction current_dir)
+{
+	if (dx == 0 && dy == 0) return current_dir;
+
+	int abs_dx = std::abs(dx);
+	int abs_dy = std::abs(dy);
+
+	/* tan(22.5 deg) ~ 0.414, approximated as 5 / 12 ~ 0.4167 */
+	if (abs_dx * 5 >= abs_dy * 12) {
+		return (dx > 0) ? Direction::SW : Direction::NE;
+	}
+	if (abs_dy * 5 >= abs_dx * 12) {
+		return (dy > 0) ? Direction::SE : Direction::NW;
+	}
+
+	if (dx > 0 && dy > 0) return Direction::S;
+	if (dx > 0 && dy < 0) return Direction::W;
+	if (dx < 0 && dy > 0) return Direction::E;
+	return Direction::N;
+}
+
 /** Autonomous military aircraft tick handling. @copydoc DisasterVehicleTickProc */
 static bool DisasterTick_MilitaryAircraft(DisasterVehicle *v)
 {
@@ -786,13 +815,7 @@ static bool DisasterTick_MilitaryAircraft(DisasterVehicle *v)
 			}
 		}
 
-		/* If an explicit waypoint order is given, prioritize it */
-		if (v->ordered_dest != INVALID_TILE) {
-			v->big_ufo_destroyer_target = VehicleID::Invalid();
-			v->dest_tile = v->ordered_dest;
-			v->age = TimerGameCalendar::Date{0};
-			v->SetMilitaryMovementState(MMS_MOVING);
-		} else if (v->big_ufo_destroyer_target == VehicleID::Invalid()) {
+		if (v->big_ufo_destroyer_target == VehicleID::Invalid()) {
 			/* If no target, select nearest known enemy contact */
 			const MilitaryContact *contact = MilitaryFog::FindNearestEligibleEnemyContact(v);
 			if (contact != nullptr) {
@@ -802,19 +825,25 @@ static bool DisasterTick_MilitaryAircraft(DisasterVehicle *v)
 				v->SetMilitaryMovementState(MMS_MOVING);
 			} else {
 				/* Exploration behavior: head towards nearest never-scouted tile */
-				TileIndex explore_tile = MilitaryFog::FindNearestNeverScoutedTile(v);
-				if (explore_tile != INVALID_TILE) {
-					v->big_ufo_destroyer_target = VehicleID::Invalid();
-					v->dest_tile = explore_tile;
-					v->age = TimerGameCalendar::Date{0};
-					v->SetMilitaryMovementState(MMS_MOVING);
-				} else {
-					/* Entire map scouted and no known enemies: idle safely */
-					v->big_ufo_destroyer_target = VehicleID::Invalid();
+				if (v->dest_tile != INVALID_TILE && (intel.never_scouted_count == 0 || intel.is_scouted.empty() || intel.is_scouted[v->dest_tile.base()] != 0)) {
 					v->dest_tile = INVALID_TILE;
-					v->age = TimerGameCalendar::Date{0};
-					v->SetMilitaryMovementState(MMS_IDLE);
-					return true;
+				}
+
+				if (v->dest_tile == INVALID_TILE) {
+					TileIndex explore_tile = MilitaryFog::FindNearestNeverScoutedTile(v);
+					if (explore_tile != INVALID_TILE) {
+						v->big_ufo_destroyer_target = VehicleID::Invalid();
+						v->dest_tile = explore_tile;
+						v->age = TimerGameCalendar::Date{0};
+						v->SetMilitaryMovementState(MMS_MOVING);
+					} else {
+						/* Entire map scouted and no known enemies: idle safely */
+						v->big_ufo_destroyer_target = VehicleID::Invalid();
+						v->dest_tile = INVALID_TILE;
+						v->age = TimerGameCalendar::Date{0};
+						v->SetMilitaryMovementState(MMS_IDLE);
+						return true;
+					}
 				}
 			}
 		}
@@ -854,9 +883,10 @@ static bool DisasterTick_MilitaryAircraft(DisasterVehicle *v)
 					v->age = TimerGameCalendar::Date{0};
 					return true;
 				}
+			} else {
+				v->dest_tile = INVALID_TILE;
 			}
 			v->SetMilitaryMovementState(MMS_ARRIVED);
-			if (v->ordered_dest != INVALID_TILE) v->ordered_dest = INVALID_TILE;
 			v->age = TimerGameCalendar::Date{0};
 			return true;
 		}
@@ -886,7 +916,7 @@ static bool DisasterTick_MilitaryAircraft(DisasterVehicle *v)
 		}
 
 		/* Turn towards the target */
-		v->direction = GetDirectionTowards(v, target_x, target_y);
+		v->direction = GetMilitaryDirectionTowards(dx, dy, v->direction);
 		v->SetMilitaryMovementState(MMS_MOVING);
 
 		int new_x = Clamp(v->x_pos + step_x, 0, (int)(Map::MaxX() * TILE_SIZE));
@@ -1338,7 +1368,7 @@ bool SetupMilitaryScenario()
 	SpawnMilitaryTargetMarker(140 * TILE_SIZE, 100 * TILE_SIZE, 1);
 	SpawnMilitaryTargetMarker(180 * TILE_SIZE, 120 * TILE_SIZE, 1);
 
-	SpawnMilitaryAircraft(100 * TILE_SIZE, 100 * TILE_SIZE, Direction::E, 0);
+	SpawnMilitaryAircraft(100 * TILE_SIZE, 100 * TILE_SIZE, Direction::SW, 0);
 	return true;
 }
 

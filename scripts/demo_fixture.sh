@@ -3,14 +3,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CFG_FILE="${REPO_DIR}/../test_env/test_isolated.cfg"
+DEMO_ENV_DIR="${REPO_DIR}/scripts/demo_env"
+CFG_FILE="${DEMO_ENV_DIR}/demo_isolated.cfg"
 DISPLAY_NUM=":99"
 
 XVNC_PID=""
 OPENTTD_PID=""
 
 cleanup() {
-  echo "Cleaning up processes..."
+  echo "Cleaning up temporary fixture files and background processes..."
+  rm -f "${REPO_DIR}/scripts/autoexec.scr" "${REPO_DIR}/scripts/game_start.scr"
+  rm -rf "${DEMO_ENV_DIR}"
   if [ -n "${OPENTTD_PID}" ]; then kill "${OPENTTD_PID}" 2>/dev/null || true; fi
   if [ -n "${XVNC_PID}" ]; then kill "${XVNC_PID}" 2>/dev/null || true; fi
 }
@@ -23,7 +26,10 @@ if ! pgrep -f "Xvnc ${DISPLAY_NUM}" >/dev/null; then
   sleep 1
 fi
 
-echo "=== 2. Preparing game scripts for continuous fixture demonstration ==="
+echo "=== 2. Preparing isolated environment and ephemeral scripts ==="
+mkdir -p "${DEMO_ENV_DIR}"
+cp "${REPO_DIR}/build-gui/regression/regression.cfg" "${CFG_FILE}"
+
 cat << 'EOF' > "${REPO_DIR}/scripts/autoexec.scr"
 setting gui.smooth_scroll 0
 setting_newgame game_creation.map_x 8
@@ -33,7 +39,6 @@ EOF
 
 cat << 'EOF' > "${REPO_DIR}/scripts/game_start.scr"
 setup_military_scenario
-order_military_aircraft 140 100
 scrollto instant 140 100
 zoomto 0
 print_military_status
@@ -44,7 +49,7 @@ schedule_ticks 300 "print_military_status"
 schedule_ticks 450 "print_military_status"
 schedule_ticks 620 "scrollto instant 140 100"
 schedule_ticks 640 "print_military_status"
-schedule_ticks 670 "order_military_aircraft 180 100"
+schedule_ticks 670 "relocate_military_aircraft 180 120"
 schedule_ticks 720 "scrollto instant 140 100"
 schedule_ticks 840 "print_military_status"
 schedule_ticks 1200 "exit"
@@ -64,27 +69,27 @@ sleep 1.2
 import -display "${DISPLAY_NUM}" -window root capture_enemy_hidden.png
 echo "Captured capture_enemy_hidden.png"
 
-# t1: Aircraft in ordinary flight at tile ~110 (viewport following aircraft)
+# t1: Aircraft in ordinary autonomous flight at tile ~116 (viewport following aircraft)
 sleep 3.5
 import -display "${DISPLAY_NUM}" -window root capture_aircraft_mov1.png
 echo "Captured capture_aircraft_mov1.png"
 
-# t2: Aircraft in ordinary flight at tile ~119 (viewport following aircraft)
+# t2: Aircraft in ordinary autonomous flight at tile ~110 (viewport following aircraft)
 sleep 4.0
 import -display "${DISPLAY_NUM}" -window root capture_aircraft_mov2.png
 echo "Captured capture_aircraft_mov2.png"
 
-# t3: Aircraft in ordinary flight at tile ~129 (viewport following aircraft)
+# t3: Aircraft in ordinary autonomous flight at tile ~105 (viewport following aircraft)
 sleep 4.0
 import -display "${DISPLAY_NUM}" -window root capture_aircraft_mov3.png
 echo "Captured capture_aircraft_mov3.png"
 
-# t4: Aircraft arrived at (140, 100), tile scouted and currently visible
+# t4: Aircraft arrived at (140, 100), tile scouted and enemy marker currently visible
 sleep 5.0
 import -display "${DISPLAY_NUM}" -window root capture_enemy_visible.png
 echo "Captured capture_enemy_visible.png"
 
-# t5: Aircraft ordered to (180, 100), flew away past 5-tile radius; tile 140 has stale snapshot, enemy absent
+# t5: Aircraft relocated to (180, 120); tile 140 has stale snapshot, enemy marker concealed
 sleep 6.0
 import -display "${DISPLAY_NUM}" -window root capture_enemy_absent.png
 echo "Captured capture_enemy_absent.png"

@@ -7,3 +7,4 @@ docs/source/*
 /out
 /vcpkg_installed
 /capture_*.png
+/scripts/demo_env/

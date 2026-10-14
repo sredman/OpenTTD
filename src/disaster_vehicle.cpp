@@ -786,8 +786,14 @@ static bool DisasterTick_MilitaryAircraft(DisasterVehicle *v)
 			}
 		}
 
-		/* If no target, select nearest known enemy contact */
-		if (v->big_ufo_destroyer_target == VehicleID::Invalid()) {
+		/* If an explicit waypoint order is given, prioritize it */
+		if (v->ordered_dest != INVALID_TILE) {
+			v->big_ufo_destroyer_target = VehicleID::Invalid();
+			v->dest_tile = v->ordered_dest;
+			v->age = TimerGameCalendar::Date{0};
+			v->SetMilitaryMovementState(MMS_MOVING);
+		} else if (v->big_ufo_destroyer_target == VehicleID::Invalid()) {
+			/* If no target, select nearest known enemy contact */
 			const MilitaryContact *contact = MilitaryFog::FindNearestEligibleEnemyContact(v);
 			if (contact != nullptr) {
 				v->big_ufo_destroyer_target = contact->vehicle_id;
@@ -850,6 +856,7 @@ static bool DisasterTick_MilitaryAircraft(DisasterVehicle *v)
 				}
 			}
 			v->SetMilitaryMovementState(MMS_ARRIVED);
+			if (v->ordered_dest != INVALID_TILE) v->ordered_dest = INVALID_TILE;
 			v->age = TimerGameCalendar::Date{0};
 			return true;
 		}

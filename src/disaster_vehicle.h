@@ -50,6 +50,7 @@ struct DisasterVehicle final : public SpecializedVehicle<DisasterVehicle, Vehicl
 	VehicleID big_ufo_destroyer_target = VehicleID::Invalid(); ///< The big UFO that this destroyer is supposed to bomb.
 	VehicleAirFlags flags{}; ///< Flags about the state of the vehicle, @see VehicleAirFlags
 	uint16_t state = 0; ///< Action stage of the disaster vehicle.
+	TileIndex ordered_dest = INVALID_TILE; ///< Explicit ordered waypoint destination.
 
 	/**
 	 * For use by saveload.

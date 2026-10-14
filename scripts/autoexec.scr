@@ -1,0 +1,4 @@
+setting gui.smooth_scroll 0
+setting_newgame game_creation.map_x 8
+setting_newgame game_creation.map_y 8
+newgame

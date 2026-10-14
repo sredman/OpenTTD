@@ -54,6 +54,7 @@
 #endif /* WITH_ZLIB */
 
 #include "table/strings.h"
+#include "timer/timer_game_tick.h"
 
 #include "safeguards.h"
 
@@ -62,6 +63,30 @@ static uint _script_current_depth; ///< Depth of scripts running (used to abort 
 
 /* Scheduled execution handling. */
 static std::string _scheduled_monthly_script; ///< Script scheduled to execute by the 'schedule' console command (empty if no script is scheduled).
+
+struct ScheduledTickCommand {
+	uint32_t ticks_remaining;
+	std::string command;
+};
+static std::vector<ScheduledTickCommand> _scheduled_tick_commands;
+
+static const IntervalTimer<TimerGameTick> _scheduled_tick_timer = {{TimerGameTick::Priority::None, 1}, [](auto) {
+	if (_scheduled_tick_commands.empty()) return;
+
+	std::vector<std::string> to_execute;
+	for (auto it = _scheduled_tick_commands.begin(); it != _scheduled_tick_commands.end();) {
+		if (it->ticks_remaining <= 1) {
+			to_execute.push_back(std::move(it->command));
+			it = _scheduled_tick_commands.erase(it);
+		} else {
+			it->ticks_remaining--;
+			++it;
+		}
+	}
+	for (const auto &cmd : to_execute) {
+		IConsoleCmdExec(cmd);
+	}
+}};
 
 /** Timer that runs every month of game time for the 'schedule' console command. */
 static const IntervalTimer<TimerGameCalendar> _scheduled_monthly_timer = {{TimerGameCalendar::Trigger::Month, TimerGameCalendar::Priority::None}, [](auto) {
@@ -3005,6 +3030,105 @@ static bool ConRelocateMilitaryAircraft(std::span<std::string_view> argv)
 	return false;
 }
 
+/** Schedule command execution after N ticks. @copydoc IConsoleCmdProc */
+static bool ConScheduleTicks(std::span<std::string_view> argv)
+{
+	if (argv.size() < 3) {
+		IConsolePrint(CC_HELP, "Schedule a command after N ticks. Usage: 'schedule_ticks <ticks> <command>'.");
+		return false;
+	}
+	auto ticks = ParseType<uint32_t>(argv[1]);
+	if (!ticks.has_value()) return false;
+
+	std::string command;
+	for (size_t i = 2; i < argv.size(); i++) {
+		if (!command.empty()) command += ' ';
+		command += argv[i];
+	}
+	if (command.size() >= 2 && command.front() == '"' && command.back() == '"') {
+		command = command.substr(1, command.size() - 2);
+	}
+
+	_scheduled_tick_commands.push_back({*ticks, std::move(command)});
+	return true;
+}
+
+/** Order military aircraft command. @copydoc IConsoleCmdProc */
+static bool ConOrderMilitaryAircraft(std::span<std::string_view> argv)
+{
+	if (argv.size() < 3) {
+		IConsolePrint(CC_HELP, "Order military aircraft to fly towards tile. Usage: 'order_military_aircraft <tile_x> <tile_y>'.");
+		return false;
+	}
+	auto x = ParseType<int>(argv[1]);
+	auto y = ParseType<int>(argv[2]);
+	if (!x.has_value() || !y.has_value()) return false;
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->big_ufo_destroyer_target = VehicleID::Invalid();
+			v->ordered_dest = TileXY(Clamp(*x, 0, (int)Map::MaxX()), Clamp(*y, 0, (int)Map::MaxY()));
+			v->dest_tile = v->ordered_dest;
+			v->SetMilitaryMovementState(MMS_MOVING);
+			v->age = TimerGameCalendar::Date{0};
+			IConsolePrint(CC_DEFAULT, "Military aircraft ordered to ({}, {}).", *x, *y);
+			return true;
+		}
+	}
+	IConsolePrint(CC_DEFAULT, "No military aircraft found.");
+	return false;
+}
+
+
+/** Print military aircraft and marker status. @copydoc IConsoleCmdProc */
+/** Follow military aircraft command. @copydoc IConsoleCmdProc */
+static bool ConFollowMilitaryAircraft([[maybe_unused]] std::span<std::string_view> argv)
+{
+	Window *w = FindWindowById(WindowClass::MainWindow, 0);
+	if (w == nullptr || w->viewport == nullptr) return false;
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			ScrollMainWindowTo(v->x_pos, v->y_pos, v->z_pos, true);
+			w->viewport->follow_vehicle = v->index;
+			IConsolePrint(CC_DEFAULT, "Following military aircraft.");
+			return true;
+		}
+	}
+	IConsolePrint(CC_DEFAULT, "No military aircraft found.");
+	return false;
+}
+
+/** Print military aircraft and marker status. @copydoc IConsoleCmdProc */
+static bool ConPrintMilitaryStatus([[maybe_unused]] std::span<std::string_view> argv)
+{
+	Window *w = FindWindowById(WindowClass::MainWindow, 0);
+	if (w != nullptr && w->viewport != nullptr) {
+		const ViewportData *vp = w->viewport.get();
+		Debug(Facility::Console, Severity::Error, "STATUS VIEWPORT: left={}, top={}, width={}, height={}, virt_left={}, virt_top={}, zoom={}, follow={}",
+			vp->left, vp->top, vp->width, vp->height, vp->virtual_left, vp->virtual_top, (int)vp->zoom, vp->follow_vehicle.base());
+	}
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			Debug(Facility::Console, Severity::Error, "STATUS AIRCRAFT: pos=({}, {}), tile=({}, {}), z={}, coord=({}, {}, {}, {}), sprite_count={}, sprite={}, state={}, target={}",
+				v->x_pos, v->y_pos, TileX(v->tile), TileY(v->tile), v->z_pos,
+				v->coord.left, v->coord.top, v->coord.right, v->coord.bottom,
+				v->sprite_cache.sprite_seq.count,
+				v->sprite_cache.sprite_seq.count > 0 ? v->sprite_cache.sprite_seq.seq[0].sprite : 0,
+				(int)v->GetMilitaryMovementState(), v->big_ufo_destroyer_target.base());
+		} else if (v->subtype == ST_MILITARY_AIRCRAFT_SHADOW) {
+			Debug(Facility::Console, Severity::Error, "STATUS SHADOW: pos=({}, {}), tile=({}, {}), z={}, coord=({}, {}, {}, {}), sprite_count={}, sprite={}",
+				v->x_pos, v->y_pos, TileX(v->tile), TileY(v->tile), v->z_pos,
+				v->coord.left, v->coord.top, v->coord.right, v->coord.bottom,
+				v->sprite_cache.sprite_seq.count,
+				v->sprite_cache.sprite_seq.count > 0 ? v->sprite_cache.sprite_seq.seq[0].sprite : 0);
+		} else if (v->subtype == ST_MILITARY_TARGET_MARKER) {
+			Debug(Facility::Console, Severity::Error, "STATUS MARKER: side={}, pos=({}, {}), tile=({}, {}), coord=({}, {}, {}, {}), hidden={}",
+				(int)v->GetMilitarySide(), v->x_pos, v->y_pos, TileX(v->tile), TileY(v->tile),
+				v->coord.left, v->coord.top, v->coord.right, v->coord.bottom,
+				MilitaryFog::ShouldHideVehicleForLocal(v));
+		}
+	}
+	return true;
+}
 
 /** Console command registration. */
 void IConsoleStdLibRegister()
@@ -3014,6 +3138,8 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("echoc",                   ConEchoC);
 	IConsole::CmdRegister("exec",                    ConExec);
 	IConsole::CmdRegister("schedule",                ConSchedule);
+	IConsole::CmdRegister("schedule_ticks",          ConScheduleTicks);
+	IConsole::CmdRegister("print_military_status",   ConPrintMilitaryStatus);
 	IConsole::CmdRegister("exit",                    ConExit);
 	IConsole::CmdRegister("part",                    ConPart);
 	IConsole::CmdRegister("help",                    ConHelp);
@@ -3152,4 +3278,6 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("setup_military_scenario", ConSetupMilitaryScenario);
 	IConsole::CmdRegister("reset_military_scenario", ConResetMilitaryScenario);
 	IConsole::CmdRegister("relocate_military_aircraft", ConRelocateMilitaryAircraft);
+	IConsole::CmdRegister("order_military_aircraft", ConOrderMilitaryAircraft);
+	IConsole::CmdRegister("follow_military_aircraft", ConFollowMilitaryAircraft);
 }

@@ -825,6 +825,9 @@ TEST_CASE("MilitaryFog - Uninterrupted versus loaded normal-tick continuation wi
 TEST_CASE("MilitaryFog - Contact count 32-bit boundary serialization")
 {
 	ResetFogTestEnvironment();
+	Map::Allocate(4096, 64);
+	MilitaryFog::Initialize();
+
 	uint8_t side0 = 0;
 	SideIntelligence &intel = MilitaryFog::GetSideIntelligence(side0);
 	intel.contacts.clear();
@@ -832,13 +835,20 @@ TEST_CASE("MilitaryFog - Contact count 32-bit boundary serialization")
 	constexpr uint32_t NUM_CONTACTS = 65536;
 	intel.contacts.reserve(NUM_CONTACTS);
 
-	/* Add 65,536 contacts with 32-bit VehicleIDs and coordinates/tiles detecting 16-bit truncation */
+	/* Add 65,536 contacts with 32-bit VehicleIDs, valid coordinates > 32,767 (signed 16-bit threshold),
+	 * and valid tile indices >= 65,536 (16-bit unsigned threshold) on a supported 4096x64 map. */
 	for (uint32_t i = 0; i < NUM_CONTACTS; i++) {
 		MilitaryContact c;
 		c.vehicle_id = VehicleID{0x10000 + i};
-		c.last_x = static_cast<int>(0x10000 + (i % 1000) * 16);
-		c.last_y = static_cast<int>(0x10000 + (i / 1000) * 16);
-		c.last_tile = TileIndex{static_cast<uint>(0x10000 + (i % 30000))};
+		/* Coordinates in [33,000, 64,999] are strictly > 32,767 (detecting signed 16-bit overflow)
+		 * while within map X dimension (4096 * 16 = 65,536 units). */
+		c.last_x = static_cast<int>(33000 + (i % 32000));
+		c.last_y = static_cast<int>((i % 60) * 16 + 8);
+		/* Tile indices with tile_y in [16, 61] have tile index in [65,536, 253,755],
+		 * detecting 16-bit unsigned wrap within valid map size Map::Size(). */
+		uint tile_x = 100 + (i % 3800);
+		uint tile_y = 16 + ((i / 3800) % 46);
+		c.last_tile = TileXY(tile_x, tile_y);
 		c.side = 1;
 		c.currently_visible = (i % 2 == 0);
 		intel.contacts.push_back(c);
@@ -857,19 +867,36 @@ TEST_CASE("MilitaryFog - Contact count 32-bit boundary serialization")
 	const auto &restored = MilitaryFog::GetSideIntelligence(side0).contacts;
 	REQUIRE(restored.size() == NUM_CONTACTS);
 	for (uint32_t i = 0; i < NUM_CONTACTS; i += 257) {
+		uint tile_x = 100 + (i % 3800);
+		uint tile_y = 16 + ((i / 3800) % 46);
 		CHECK(restored[i].vehicle_id == VehicleID{0x10000 + i});
-		CHECK(restored[i].last_x == static_cast<int>(0x10000 + (i % 1000) * 16));
-		CHECK(restored[i].last_y == static_cast<int>(0x10000 + (i / 1000) * 16));
-		CHECK(restored[i].last_tile == TileIndex{static_cast<uint>(0x10000 + (i % 30000))});
+		CHECK(restored[i].last_x == static_cast<int>(33000 + (i % 32000)));
+		CHECK(restored[i].last_x > 32767);
+		CHECK(restored[i].last_x < static_cast<int>(Map::SizeX() * 16));
+		CHECK(restored[i].last_y == static_cast<int>((i % 60) * 16 + 8));
+		CHECK(restored[i].last_tile == TileXY(tile_x, tile_y));
+		CHECK(restored[i].last_tile >= TileIndex{65536});
+		CHECK(restored[i].last_tile < TileIndex{Map::Size()});
+		CHECK(IsValidTile(restored[i].last_tile));
 		CHECK(restored[i].side == 1);
 		CHECK(restored[i].currently_visible == (i % 2 == 0));
 	}
 	/* Check boundary at index 65,535 */
 	size_t last_idx = NUM_CONTACTS - 1;
+	uint last_tile_x = 100 + (static_cast<uint>(last_idx) % 3800);
+	uint last_tile_y = 16 + ((static_cast<uint>(last_idx) / 3800) % 46);
 	CHECK(restored[last_idx].vehicle_id == VehicleID{0x10000 + static_cast<uint32_t>(last_idx)});
-	CHECK(restored[last_idx].last_x == static_cast<int>(0x10000 + (last_idx % 1000) * 16));
-	CHECK(restored[last_idx].last_y == static_cast<int>(0x10000 + (last_idx / 1000) * 16));
-	CHECK(restored[last_idx].last_tile == TileIndex{static_cast<uint>(0x10000 + (last_idx % 30000))});
+	CHECK(restored[last_idx].last_x == static_cast<int>(33000 + (last_idx % 32000)));
+	CHECK(restored[last_idx].last_x > 32767);
+	CHECK(restored[last_idx].last_x < static_cast<int>(Map::SizeX() * 16));
+	CHECK(restored[last_idx].last_y == static_cast<int>((last_idx % 60) * 16 + 8));
+	CHECK(restored[last_idx].last_tile == TileXY(last_tile_x, last_tile_y));
+	CHECK(restored[last_idx].last_tile >= TileIndex{65536});
+	CHECK(restored[last_idx].last_tile < TileIndex{Map::Size()});
+	CHECK(IsValidTile(restored[last_idx].last_tile));
 	CHECK(restored[last_idx].side == 1);
 	CHECK(restored[last_idx].currently_visible == (last_idx % 2 == 0));
+
+	/* Clean up: restore default 256x256 test environment */
+	ResetFogTestEnvironment();
 }

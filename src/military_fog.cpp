@@ -291,31 +291,58 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 		const Industry *i = Industry::GetByTileIfValid(tile);
 		if (i != nullptr) {
 			TileIndex root = i->location.tile;
-			IndustrySnapshot *snap = nullptr;
-			for (auto &existing : intel.industry_snapshots) {
-				if (existing.exists && existing.location == root) {
-					snap = &existing;
-					break;
-				}
-			}
-			if (snap == nullptr) {
-				uint32_t handle = intel.next_industry_handle++;
-				intel.industry_snapshots.emplace_back();
-				snap = &intel.industry_snapshots.back();
-				snap->handle = handle;
-				snap->location = root;
-			}
-			snap->type = i->type;
-			snap->prod_level = i->prod_level;
-			snap->owner = i->owner;
-			snap->colour = i->random_colour;
-			snap->name = GetSafeIndustryName(i);
-			snap->exists = true;
+			uint32_t prev_handle = (tile.base() < intel.tile_to_industry_handle.size()) ? intel.tile_to_industry_handle[tile.base()] : 0;
+			IndustrySnapshot *prev_snap = (prev_handle != 0) ? const_cast<IndustrySnapshot *>(GetIndustrySnapshotByHandle(side, prev_handle)) : nullptr;
 
-			if (std::find(snap->observed_tiles.begin(), snap->observed_tiles.end(), tile) == snap->observed_tiles.end()) {
-				snap->observed_tiles.push_back(tile);
+			/* If previous snapshot matches current live industry attributes, keep it */
+			if (prev_snap != nullptr && prev_snap->location == root && prev_snap->type == i->type &&
+					prev_snap->colour == i->random_colour && prev_snap->name == GetSafeIndustryName(i)) {
+				prev_snap->prod_level = i->prod_level;
+				prev_snap->owner = i->owner;
+				if (std::find(prev_snap->observed_tiles.begin(), prev_snap->observed_tiles.end(), tile) == prev_snap->observed_tiles.end()) {
+					prev_snap->observed_tiles.push_back(tile);
+				}
+				intel.tile_to_industry_handle[tile.base()] = prev_snap->handle;
+			} else {
+				/* Tile changed or is new: detach tile from previous snapshot without mutating remaining hidden tiles */
+				if (prev_snap != nullptr) {
+					auto it = std::find(prev_snap->observed_tiles.begin(), prev_snap->observed_tiles.end(), tile);
+					if (it != prev_snap->observed_tiles.end()) {
+						prev_snap->observed_tiles.erase(it);
+					}
+					if (prev_snap->observed_tiles.empty()) {
+						prev_snap->exists = false;
+					}
+				}
+
+				/* Find if an existing active snapshot already represents this new live industry at root */
+				IndustrySnapshot *snap = nullptr;
+				for (auto &existing : intel.industry_snapshots) {
+					if (existing.exists && existing.location == root && existing.type == i->type &&
+							existing.colour == i->random_colour && existing.name == GetSafeIndustryName(i)) {
+						snap = &existing;
+						break;
+					}
+				}
+				if (snap == nullptr) {
+					uint32_t handle = intel.next_industry_handle++;
+					intel.industry_snapshots.emplace_back();
+					snap = &intel.industry_snapshots.back();
+					snap->handle = handle;
+					snap->location = root;
+					snap->type = i->type;
+					snap->colour = i->random_colour;
+					snap->name = GetSafeIndustryName(i);
+				}
+				snap->prod_level = i->prod_level;
+				snap->owner = i->owner;
+				snap->exists = true;
+
+				if (std::find(snap->observed_tiles.begin(), snap->observed_tiles.end(), tile) == snap->observed_tiles.end()) {
+					snap->observed_tiles.push_back(tile);
+				}
+				intel.tile_to_industry_handle[tile.base()] = snap->handle;
 			}
-			intel.tile_to_industry_handle[tile.base()] = snap->handle;
 		}
 	} else {
 		/* Tile is no longer an industry */
@@ -328,7 +355,7 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 					if (it != existing.observed_tiles.end()) {
 						existing.observed_tiles.erase(it);
 					}
-					if (tile == existing.location || existing.observed_tiles.empty()) {
+					if (existing.observed_tiles.empty()) {
 						existing.exists = false;
 					}
 					break;
@@ -634,6 +661,17 @@ const IndustrySnapshot *MilitaryFog::GetIndustrySnapshot(uint8_t side, IndustryI
 		return GetIndustrySnapshotAtLocation(side, ind->location.tile);
 	}
 	return nullptr;
+}
+
+size_t MilitaryFog::GetIndustryTypeCount(uint8_t side, IndustryType type)
+{
+	if (!_military_fog_active || side >= MAX_MILITARY_SIDES) return 0;
+	const auto &snaps = _side_intelligence[side].industry_snapshots;
+	size_t count = 0;
+	for (const auto &is : snaps) {
+		if (is.exists && is.type == type) count++;
+	}
+	return count;
 }
 
 void MilitaryFog::ReconstructVisibility(bool refresh_unseen)

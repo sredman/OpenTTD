@@ -3039,6 +3039,7 @@ static bool ConRelocateMilitaryAircraft(std::span<std::string_view> argv)
 	return false;
 }
 
+/** Cached industry ID for industry fixture console commands. */
 static IndustryID _fixture_ind_id{};
 
 /** Setup industry fixture command. @copydoc IConsoleCmdProc */
@@ -3050,18 +3051,24 @@ static bool ConSetupIndustryFixture([[maybe_unused]] std::span<std::string_view>
 	}
 
 	TileIndex tile_A = TileXY(140, 100);
+	TileIndex tile_A2 = TileXY(141, 100);
 	if (Industry::CanAllocateItem()) {
 		Industry *ind = Industry::Create(tile_A);
 		if (ind != nullptr) {
-			ind->type = 0;
-			ind->location.tile = tile_A;
+			ind->type = 0; // Coal Mine
+			ind->location = TileArea(tile_A, 2, 1);
 			ind->owner = OWNER_NONE;
 			ind->random_colour = Colours::Red;
 			ind->cached_name = "FixtureCoalMineA";
 			_fixture_ind_id = ind->index;
+			Industry::industries[ind->type].insert(ind->index);
+
 			MakeIndustry(tile_A, _fixture_ind_id, 0, 0, WaterClass::Invalid);
+			MakeIndustry(tile_A2, _fixture_ind_id, 0, 1, WaterClass::Invalid);
 			SetIndustryCompleted(tile_A);
+			SetIndustryCompleted(tile_A2);
 			SetIndustryConstructionStage(tile_A, 3);
+			SetIndustryConstructionStage(tile_A2, 3);
 		}
 	}
 
@@ -3081,7 +3088,7 @@ static bool ConSetupIndustryFixture([[maybe_unused]] std::span<std::string_view>
 	/* Scroll main window to tile A */
 	ScrollMainWindowToTile(tile_A, true);
 
-	IConsolePrint(CC_DEFAULT, "Industry fixture initialized: Industry A scouted, SmallMap in Industries mode.");
+	IConsolePrint(CC_DEFAULT, "Industry fixture initialized: Industry A (2-tile) scouted, SmallMap in Industries mode.");
 	return true;
 }
 
@@ -3098,13 +3105,15 @@ static bool ConHideAndDeleteIndustryA([[maybe_unused]] std::span<std::string_vie
 	}
 	MilitaryFog::UpdateAllVisibility();
 
-	/* Delete Industry A from live pool and clear tile while hidden */
+	/* Delete Industry A from live pool and clear tiles while hidden */
 	TileIndex tile_A = TileXY(140, 100);
+	TileIndex tile_A2 = TileXY(141, 100);
 	Industry *ind = Industry::GetIfValid(_fixture_ind_id);
 	if (ind != nullptr) {
 		delete ind;
 	}
 	MakeClear(tile_A, ClearGround::Grass, 0);
+	MakeClear(tile_A2, ClearGround::Grass, 0);
 
 	/* Ensure main window stays centered on tile A */
 	ScrollMainWindowToTile(tile_A, true);
@@ -3120,11 +3129,13 @@ static bool ConObserveIndustryB([[maybe_unused]] std::span<std::string_view> arg
 	TileIndex tile_B = TileXY(180, 120);
 	Industry *reused_ind = Industry::CreateAtIndex(_fixture_ind_id, tile_B);
 	if (reused_ind != nullptr) {
-		reused_ind->type = 2;
-		reused_ind->location.tile = tile_B;
+		reused_ind->type = 2; // Sawmill
+		reused_ind->location = TileArea(tile_B, 1, 1);
 		reused_ind->owner = OWNER_NONE;
 		reused_ind->random_colour = Colours::Green;
-		reused_ind->cached_name = "FixturePowerStationB";
+		reused_ind->cached_name = "FixtureSawmillB";
+		Industry::industries[reused_ind->type].insert(reused_ind->index);
+
 		MakeIndustry(tile_B, _fixture_ind_id, 2, 0, WaterClass::Invalid);
 		SetIndustryCompleted(tile_B);
 		SetIndustryConstructionStage(tile_B, 3);
@@ -3144,6 +3155,28 @@ static bool ConObserveIndustryB([[maybe_unused]] std::span<std::string_view> arg
 	ScrollMainWindowToTile(TileXY(140, 100), true);
 
 	IConsolePrint(CC_DEFAULT, "Industry B created and observed; tile A remains hidden.");
+	return true;
+}
+
+/** Partial re-scout industry A command (observes tile A, tile A2 remains hidden). @copydoc IConsoleCmdProc */
+static bool ConPartialRescoutIndustryA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft to (135, 100) so tile (140, 100) is at radius 5, but tile (141, 100) is outside radius 5 (dist = 6) */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(135 * TILE_SIZE, 100 * TILE_SIZE, GetAircraftFlightLevel(v));
+			v->dest_tile = TileXY(135, 100);
+			v->cur_speed = 0;
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(135 * TILE_SIZE, 100 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Keep main window centered on tile A */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Tile A (140, 100) partially rescouted; tile A2 (141, 100) remains hidden.");
 	return true;
 }
 
@@ -3391,5 +3424,6 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("setup_industry_fixture",    ConSetupIndustryFixture);
 	IConsole::CmdRegister("hide_and_delete_industry_a", ConHideAndDeleteIndustryA);
 	IConsole::CmdRegister("observe_industry_b",        ConObserveIndustryB);
+	IConsole::CmdRegister("partial_rescout_industry_a", ConPartialRescoutIndustryA);
 	IConsole::CmdRegister("rescout_industry_a",        ConRescoutIndustryA);
 }

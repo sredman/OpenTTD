@@ -1725,7 +1725,16 @@ public:
 							if (tbl.show_on_map && tbl.industry_type == _smallmap_industry_highlight) {
 								legend_colour = _smallmap_industry_highlight_state ? PC_WHITE : PC_BLACK;
 							}
-							this->DrawLegend(text, icon, tbl.show_on_map, GetString(STR_SMALLMAP_INDUSTRY, tbl.legend, Industry::GetIndustryTypeCount(tbl.industry_type)));
+							{
+								size_t count = Industry::GetIndustryTypeCount(tbl.industry_type);
+								if (MilitaryFog::IsActive()) {
+									uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
+									if (side < MAX_MILITARY_SIDES) {
+										count = MilitaryFog::GetIndustryTypeCount(side, tbl.industry_type);
+									}
+								}
+								this->DrawLegend(text, icon, tbl.show_on_map, GetString(STR_SMALLMAP_INDUSTRY, tbl.legend, count));
+							}
 							break;
 
 						case SmallMapType::LinkStats:

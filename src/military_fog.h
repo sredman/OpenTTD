@@ -286,6 +286,14 @@ public:
 	 */
 	static const IndustrySnapshot *GetIndustrySnapshot(uint8_t side, IndustryID industry);
 
+	/**
+	 * Get the remembered count of industries of a specific type for a side.
+	 * @param side Side index.
+	 * @param type Industry type ID.
+	 * @return Count of remembered industries of the given type.
+	 */
+	static size_t GetIndustryTypeCount(uint8_t side, IndustryType type);
+
 	/* Save / Load */
 
 	/**

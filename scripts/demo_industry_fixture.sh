@@ -15,14 +15,15 @@ cleanup() {
   echo "Cleaning up temporary fixture files and background processes..."
   rm -rf "${DEMO_ENV_DIR}"
   if [ -n "${OPENTTD_PID}" ]; then kill "${OPENTTD_PID}" 2>/dev/null || true; fi
-  if [ -n "${XVNC_PID}" ]; then kill "${XVNC_PID}" 2>/dev/null || true; fi
-  rm -f "/tmp/.X${DISPLAY_NUM#:}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM#:}" 2>/dev/null || true
+  if [ -n "${XVNC_PID}" ]; then
+    kill "${XVNC_PID}" 2>/dev/null || true
+    rm -f "/tmp/.X${DISPLAY_NUM#:}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM#:}" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT INT TERM
 
 echo "=== 1. Starting isolated Xvnc on ${DISPLAY_NUM} ==="
 if ! pgrep -f "Xvnc ${DISPLAY_NUM}" >/dev/null; then
-  rm -f "/tmp/.X${DISPLAY_NUM#:}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM#:}" 2>/dev/null || true
   Xvnc "${DISPLAY_NUM}" -geometry 1280x800 -depth 24 -SecurityTypes None -rfbport 0 -interface 127.0.0.1 &
   XVNC_PID=$!
   sleep 1
@@ -45,8 +46,9 @@ scrollto instant 140 100
 zoomto 0
 schedule_ticks 60 "hide_and_delete_industry_a"
 schedule_ticks 180 "observe_industry_b"
-schedule_ticks 300 "rescout_industry_a"
-schedule_ticks 500 "exit"
+schedule_ticks 300 "partial_rescout_industry_a"
+schedule_ticks 420 "rescout_industry_a"
+schedule_ticks 660 "exit"
 unpause
 EOF
 
@@ -64,12 +66,17 @@ import -display "${DISPLAY_NUM}" -window root capture_industry_stale_a.png
 echo "Captured capture_industry_stale_a.png"
 
 # Frame 2: After tick 180, Industry B created reusing ID and observed -> A still unchanged stale snapshot, B observed
-sleep 4.5
+sleep 4.0
 import -display "${DISPLAY_NUM}" -window root capture_industry_observed_b.png
 echo "Captured capture_industry_observed_b.png"
 
-# Frame 3: After tick 300, Aircraft scouts tile A -> Industry A removed on main map and Industries minimap; Industry B remains
-sleep 4.5
+# Frame 3: After tick 300, Aircraft partially scouts tile A (140, 100) -> tile A cleared, tile A2 (141, 100) remains remembered
+sleep 4.0
+import -display "${DISPLAY_NUM}" -window root capture_industry_partial_a.png
+echo "Captured capture_industry_partial_a.png"
+
+# Frame 4: After tick 420, Aircraft scouts all of A -> tile A and A2 cleared, Coal Mine removed on minimap, B remains
+sleep 4.0
 import -display "${DISPLAY_NUM}" -window root capture_industry_rescout_a.png
 echo "Captured capture_industry_rescout_a.png"
 

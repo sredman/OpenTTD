@@ -763,7 +763,10 @@ private:
 			this->towns.reserve(Town::GetNumItems());
 
 			for (const Town *t : Town::Iterate()) {
-				if (MilitaryFog::IsActive() && !MilitaryFog::IsTileScouted(MilitaryFog::GetLocalIntelligenceSide(), t->xy)) continue;
+				if (MilitaryFog::IsActive()) {
+					const TownSnapshot *ts = MilitaryFog::GetTownSnapshot(MilitaryFog::GetLocalIntelligenceSide(), t->index);
+					if (ts == nullptr || !ts->exists) continue;
+				}
 				if (this->string_filter.IsEmpty()) {
 					this->towns.push_back(t);
 					continue;

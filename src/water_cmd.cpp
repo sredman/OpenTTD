@@ -1062,10 +1062,12 @@ static void GetTileDesc_Water(TileIndex tile, TileDesc &td)
 			break;
 		case WaterTileType::Coast: td.str = STR_LAI_WATER_DESCRIPTION_COAST_OR_RIVERBANK; break;
 		case WaterTileType::Lock : td.str = STR_LAI_WATER_DESCRIPTION_LOCK;               break;
-		case WaterTileType::Depot:
+		case WaterTileType::Depot: {
 			td.str = STR_LAI_WATER_DESCRIPTION_SHIP_DEPOT;
-			td.build_date = Depot::GetByTile(tile)->build_date;
+			Depot *d = Depot::GetByTileIfValid(tile);
+			if (d != nullptr) td.build_date = d->build_date;
 			break;
+		}
 		case WaterTileType::ClearRocks: td.str = STR_LAI_WATER_DESCRIPTION_WATER_ROCKS; break;
 		case WaterTileType::CoastRocks: td.str = STR_LAI_WATER_DESCRIPTION_COAST_ROCKS; break;
 		default: NOT_REACHED();

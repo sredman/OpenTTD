@@ -37,6 +37,8 @@ struct TownSnapshot {
 	uint32_t population = 0;   ///< Last-observed population of the town.
 	uint32_t num_houses = 0;   ///< Last-observed number of houses in the town.
 	std::string name{};        ///< Last-observed town name.
+	TileIndex xy = INVALID_TILE; ///< Town center tile.
+	bool larger_town = false;  ///< Whether town is a city.
 	bool exists = false;       ///< Whether the town existed when last observed.
 };
 
@@ -45,6 +47,9 @@ struct IndustrySnapshot {
 	IndustryType type = 0;              ///< Industry type ID.
 	TileIndex location = INVALID_TILE; ///< Industry location center/origin tile.
 	uint8_t prod_level = 0;            ///< Last-observed production level.
+	Owner owner = OWNER_NONE;          ///< Owner of the industry.
+	Colours colour = Colours::Grey;    ///< Industry colour for map drawing.
+	std::string name{};                ///< Last-observed industry name.
 	bool exists = false;               ///< Whether the industry existed when last observed.
 };
 
@@ -279,7 +284,10 @@ class ActiveSnapshotScope {
 private:
 	Tile::TileBase *prev_base = nullptr;         ///< Original base tile pointer.
 	Tile::TileExtended *prev_extended = nullptr; ///< Original extended tile pointer.
+	uint8_t prev_side = 0xFF;                    ///< Previous active side index.
 	bool active = false;                         ///< Whether buffer swap is currently active.
+
+	inline static uint8_t _active_side = 0xFF;   ///< Currently active side for snapshot scope.
 
 public:
 	/**
@@ -292,6 +300,18 @@ public:
 	 * Destruct scope and restore active map buffers.
 	 */
 	~ActiveSnapshotScope();
+
+	/**
+	 * Check whether snapshot scope is currently active.
+	 * @return true if snapshot buffer swap is active.
+	 */
+	static bool IsActive() { return _active_side != 0xFF; }
+
+	/**
+	 * Get the currently active snapshot side.
+	 * @return Active side index.
+	 */
+	static uint8_t GetCurrentSide() { return _active_side; }
 };
 
 #endif /* MILITARY_FOG_H */

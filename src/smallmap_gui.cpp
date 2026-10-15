@@ -942,11 +942,8 @@ protected:
 			uint32_t val = this->GetTileColours(ta);
 			uint8_t *val8 = (uint8_t *)&val;
 			int idx = std::max(0, -start_pos);
-			TileIndex tile = TileXY(xc, yc);
-			bool never_scouted = MilitaryFog::IsActive() && !MilitaryFog::IsTileScouted(MilitaryFog::GetLocalIntelligenceSide(), tile);
 			for (int pos = std::max(0, start_pos); pos < end_pos; pos++) {
-				PixelColour col = never_scouted ? PC_DARK_GREY : PixelColour{val8[idx]};
-				blitter->SetPixel(dst, idx, 0, col);
+				blitter->SetPixel(dst, idx, 0, PixelColour{val8[idx]});
 				idx++;
 			}
 		/* Switch to next tile in the column */

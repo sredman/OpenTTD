@@ -513,14 +513,14 @@ void DrawNewHouseTile(TileInfo *ti, HouseID house_id)
 		bool draw_old_one = true;
 		if (hs->callback_mask.Test(HouseCallbackMask::DrawFoundations)) {
 			/* Called to determine the type (if any) of foundation to draw for the house tile */
-			uint32_t callback_res = GetHouseCallback(CBID_HOUSE_DRAW_FOUNDATIONS, 0, 0, house_id, Town::GetByTile(ti->tile), ti->tile);
+			uint32_t callback_res = GetHouseCallback(CBID_HOUSE_DRAW_FOUNDATIONS, 0, 0, house_id, Town::GetByTileIfValid(ti->tile), ti->tile);
 			if (callback_res != CALLBACK_FAILED) draw_old_one = ConvertBooleanCallback(hs->grf_prop.grffile, CBID_HOUSE_DRAW_FOUNDATIONS, callback_res);
 		}
 
 		if (draw_old_one) DrawFoundation(ti, Foundation::Leveled);
 	}
 
-	HouseResolverObject object(house_id, ti->tile, Town::GetByTile(ti->tile));
+	HouseResolverObject object(house_id, ti->tile, Town::GetByTileIfValid(ti->tile));
 
 	const auto *group = object.Resolve<TileLayoutSpriteGroup>();
 	if (group != nullptr) {

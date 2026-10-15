@@ -1438,7 +1438,10 @@ protected:
 			this->industries.reserve(Industry::GetNumItems());
 
 			for (const Industry *i : Industry::Iterate()) {
-				if (MilitaryFog::IsActive() && !MilitaryFog::IsTileScouted(MilitaryFog::GetLocalIntelligenceSide(), i->location.tile)) continue;
+				if (MilitaryFog::IsActive()) {
+					const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshot(MilitaryFog::GetLocalIntelligenceSide(), i->index);
+					if (is == nullptr || !is->exists) continue;
+				}
 				if (this->string_filter.IsEmpty()) {
 					this->industries.push_back(i);
 					continue;

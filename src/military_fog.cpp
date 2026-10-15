@@ -15,6 +15,7 @@
 #include "saveload/saveload.h"
 #include "viewport_func.h"
 #include "vehicle_func.h"
+#include "language.h"
 #include <algorithm>
 #include "safeguards.h"
 
@@ -24,6 +25,16 @@ static bool _military_fog_active = false;
 static std::array<uint8_t, MAX_COMPANIES> _company_intel_side{};
 /** Intelligence state for each military side. */
 static std::array<SideIntelligence, MAX_MILITARY_SIDES> _side_intelligence{};
+
+static std::string GetSafeIndustryName(const Industry *i)
+{
+	if (i == nullptr) return "";
+	if (!i->cached_name.empty()) return i->cached_name;
+	if (_current_language != nullptr && i->town != nullptr) {
+		return i->GetCachedName();
+	}
+	return "";
+}
 
 
 void SideIntelligence::Allocate(size_t map_size)
@@ -93,6 +104,8 @@ void MilitaryFog::Initialize()
 			ts.population = t->cache.population;
 			ts.num_houses = t->cache.num_houses;
 			ts.name = t->name;
+			ts.xy = t->xy;
+			ts.larger_town = t->larger_town;
 			ts.exists = true;
 		}
 
@@ -106,6 +119,9 @@ void MilitaryFog::Initialize()
 			is.type = i->type;
 			is.location = i->location.tile;
 			is.prod_level = i->prod_level;
+			is.owner = i->owner;
+			is.colour = i->random_colour;
+			is.name = GetSafeIndustryName(i);
 			is.exists = true;
 		}
 
@@ -244,6 +260,8 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 			ts.population = t->cache.population;
 			ts.num_houses = t->cache.num_houses;
 			ts.name = t->name;
+			ts.xy = t->xy;
+			ts.larger_town = t->larger_town;
 			ts.exists = true;
 		}
 	}
@@ -260,7 +278,17 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 			is.type = i->type;
 			is.location = i->location.tile;
 			is.prod_level = i->prod_level;
+			is.owner = i->owner;
+			is.colour = i->random_colour;
+			is.name = GetSafeIndustryName(i);
 			is.exists = true;
+		}
+	} else {
+		/* If this tile previously held an industry in snapshot, but no longer has an industry */
+		for (auto &is : intel.industry_snapshots) {
+			if (is.exists && is.location == tile) {
+				is.exists = false;
+			}
 		}
 	}
 }
@@ -306,6 +334,8 @@ void MilitaryFog::UpdateAircraftScouting(DisasterVehicle *aircraft)
 			ts.population = t->cache.population;
 			ts.num_houses = t->cache.num_houses;
 			ts.name = t->name;
+			ts.xy = t->xy;
+			ts.larger_town = t->larger_town;
 			ts.exists = true;
 		}
 	}
@@ -319,7 +349,19 @@ void MilitaryFog::UpdateAircraftScouting(DisasterVehicle *aircraft)
 			is.type = i->type;
 			is.location = i->location.tile;
 			is.prod_level = i->prod_level;
+			is.owner = i->owner;
+			is.colour = i->random_colour;
+			is.name = GetSafeIndustryName(i);
 			is.exists = true;
+		}
+	}
+
+	/* Clear snapshots of industries whose location tile is within radius and confirmed deleted */
+	for (auto &is : intel.industry_snapshots) {
+		if (is.exists && DistanceSquare(is.location, center_tile) <= static_cast<uint>(r * r)) {
+			if (!IsTileType(is.location, TileType::Industry) || !Industry::IsValidID(GetIndustryIndex(is.location))) {
+				is.exists = false;
+			}
 		}
 	}
 
@@ -575,8 +617,10 @@ ActiveSnapshotScope::ActiveSnapshotScope(uint8_t side)
 
 	this->prev_base = Tile::active_base_tiles;
 	this->prev_extended = Tile::active_extended_tiles;
+	this->prev_side = _active_side;
 	Tile::active_base_tiles = intel.base_tiles.get();
 	Tile::active_extended_tiles = intel.extended_tiles.get();
+	_active_side = side;
 	this->active = true;
 }
 
@@ -585,6 +629,7 @@ ActiveSnapshotScope::~ActiveSnapshotScope()
 	if (this->active) {
 		Tile::active_base_tiles = this->prev_base;
 		Tile::active_extended_tiles = this->prev_extended;
+		_active_side = this->prev_side;
 	}
 }
 
@@ -659,6 +704,70 @@ void MilitaryFog::Save()
 			/* Side and visibility */
 			SlWriteByte(c.side);
 			SlWriteByte(c.currently_visible ? 1 : 0);
+		}
+
+		/* Save town_snapshots */
+		uint32_t num_towns = static_cast<uint32_t>(intel.town_snapshots.size());
+		SlWriteByte(GB(num_towns, 24, 8));
+		SlWriteByte(GB(num_towns, 16, 8));
+		SlWriteByte(GB(num_towns, 8, 8));
+		SlWriteByte(GB(num_towns, 0, 8));
+		for (const auto &ts : intel.town_snapshots) {
+			SlWriteByte(ts.exists ? 1 : 0);
+			if (ts.exists) {
+				SlWriteByte(GB(ts.population, 24, 8));
+				SlWriteByte(GB(ts.population, 16, 8));
+				SlWriteByte(GB(ts.population, 8, 8));
+				SlWriteByte(GB(ts.population, 0, 8));
+
+				SlWriteByte(GB(ts.num_houses, 24, 8));
+				SlWriteByte(GB(ts.num_houses, 16, 8));
+				SlWriteByte(GB(ts.num_houses, 8, 8));
+				SlWriteByte(GB(ts.num_houses, 0, 8));
+
+				SlWriteByte(GB(ts.xy.base(), 24, 8));
+				SlWriteByte(GB(ts.xy.base(), 16, 8));
+				SlWriteByte(GB(ts.xy.base(), 8, 8));
+				SlWriteByte(GB(ts.xy.base(), 0, 8));
+
+				SlWriteByte(ts.larger_town ? 1 : 0);
+
+				uint16_t name_len = static_cast<uint16_t>(ts.name.size());
+				SlWriteByte(GB(name_len, 8, 8));
+				SlWriteByte(GB(name_len, 0, 8));
+				for (char ch : ts.name) {
+					SlWriteByte(static_cast<uint8_t>(ch));
+				}
+			}
+		}
+
+		/* Save industry_snapshots */
+		uint32_t num_ind = static_cast<uint32_t>(intel.industry_snapshots.size());
+		SlWriteByte(GB(num_ind, 24, 8));
+		SlWriteByte(GB(num_ind, 16, 8));
+		SlWriteByte(GB(num_ind, 8, 8));
+		SlWriteByte(GB(num_ind, 0, 8));
+		for (const auto &is : intel.industry_snapshots) {
+			SlWriteByte(is.exists ? 1 : 0);
+			if (is.exists) {
+				SlWriteByte(is.type);
+
+				SlWriteByte(GB(is.location.base(), 24, 8));
+				SlWriteByte(GB(is.location.base(), 16, 8));
+				SlWriteByte(GB(is.location.base(), 8, 8));
+				SlWriteByte(GB(is.location.base(), 0, 8));
+
+				SlWriteByte(is.prod_level);
+				SlWriteByte(is.owner.base());
+				SlWriteByte(to_underlying(is.colour));
+
+				uint16_t name_len = static_cast<uint16_t>(is.name.size());
+				SlWriteByte(GB(name_len, 8, 8));
+				SlWriteByte(GB(name_len, 0, 8));
+				for (char ch : is.name) {
+					SlWriteByte(static_cast<uint8_t>(ch));
+				}
+			}
 		}
 	}
 }
@@ -742,6 +851,78 @@ void MilitaryFog::Load()
 			c.currently_visible = (SlReadByte() != 0);
 			intel.contacts.push_back(c);
 		}
+
+		uint32_t num_towns = (static_cast<uint32_t>(SlReadByte()) << 24);
+		num_towns |= (static_cast<uint32_t>(SlReadByte()) << 16);
+		num_towns |= (static_cast<uint32_t>(SlReadByte()) << 8);
+		num_towns |= static_cast<uint32_t>(SlReadByte());
+		intel.town_snapshots.resize(num_towns);
+		for (uint32_t j = 0; j < num_towns; j++) {
+			TownSnapshot &ts = intel.town_snapshots[j];
+			ts.exists = (SlReadByte() != 0);
+			if (ts.exists) {
+				uint32_t pop = (static_cast<uint32_t>(SlReadByte()) << 24);
+				pop |= (static_cast<uint32_t>(SlReadByte()) << 16);
+				pop |= (static_cast<uint32_t>(SlReadByte()) << 8);
+				pop |= static_cast<uint32_t>(SlReadByte());
+				ts.population = pop;
+
+				uint32_t nh = (static_cast<uint32_t>(SlReadByte()) << 24);
+				nh |= (static_cast<uint32_t>(SlReadByte()) << 16);
+				nh |= (static_cast<uint32_t>(SlReadByte()) << 8);
+				nh |= static_cast<uint32_t>(SlReadByte());
+				ts.num_houses = nh;
+
+				uint32_t xy = (static_cast<uint32_t>(SlReadByte()) << 24);
+				xy |= (static_cast<uint32_t>(SlReadByte()) << 16);
+				xy |= (static_cast<uint32_t>(SlReadByte()) << 8);
+				xy |= static_cast<uint32_t>(SlReadByte());
+				ts.xy = TileIndex{xy};
+
+				ts.larger_town = (SlReadByte() != 0);
+
+				uint16_t name_len = (static_cast<uint16_t>(SlReadByte()) << 8);
+				name_len |= static_cast<uint16_t>(SlReadByte());
+				ts.name.resize(name_len);
+				for (uint16_t k = 0; k < name_len; k++) {
+					ts.name[k] = static_cast<char>(SlReadByte());
+				}
+			} else {
+				ts = TownSnapshot{};
+			}
+		}
+
+		uint32_t num_ind = (static_cast<uint32_t>(SlReadByte()) << 24);
+		num_ind |= (static_cast<uint32_t>(SlReadByte()) << 16);
+		num_ind |= (static_cast<uint32_t>(SlReadByte()) << 8);
+		num_ind |= static_cast<uint32_t>(SlReadByte());
+		intel.industry_snapshots.resize(num_ind);
+		for (uint32_t j = 0; j < num_ind; j++) {
+			IndustrySnapshot &is = intel.industry_snapshots[j];
+			is.exists = (SlReadByte() != 0);
+			if (is.exists) {
+				is.type = SlReadByte();
+
+				uint32_t loc = (static_cast<uint32_t>(SlReadByte()) << 24);
+				loc |= (static_cast<uint32_t>(SlReadByte()) << 16);
+				loc |= (static_cast<uint32_t>(SlReadByte()) << 8);
+				loc |= static_cast<uint32_t>(SlReadByte());
+				is.location = TileIndex{loc};
+
+				is.prod_level = SlReadByte();
+				is.owner = Owner{SlReadByte()};
+				is.colour = static_cast<Colours>(SlReadByte());
+
+				uint16_t name_len = (static_cast<uint16_t>(SlReadByte()) << 8);
+				name_len |= static_cast<uint16_t>(SlReadByte());
+				is.name.resize(name_len);
+				for (uint16_t k = 0; k < name_len; k++) {
+					is.name[k] = static_cast<char>(SlReadByte());
+				}
+			} else {
+				is = IndustrySnapshot{};
+			}
+		}
 	}
 
 	ReconstructVisibility(false);
@@ -763,6 +944,23 @@ struct MFOGChunkHandler : ChunkHandler {
 				len += map_size * 8; // base_tiles
 				len += map_size * 4; // extended_tiles
 				len += 4 + MilitaryFog::GetSideIntelligence(s).contacts.size() * 18;
+
+				const auto &intel = MilitaryFog::GetSideIntelligence(s);
+				len += 4; // num_towns
+				for (const auto &ts : intel.town_snapshots) {
+					len += 1; // exists
+					if (ts.exists) {
+						len += 4 + 4 + 4 + 1 + 2 + ts.name.size();
+					}
+				}
+
+				len += 4; // num_industries
+				for (const auto &is : intel.industry_snapshots) {
+					len += 1; // exists
+					if (is.exists) {
+						len += 1 + 4 + 1 + 1 + 1 + 2 + is.name.size();
+					}
+				}
 			}
 		}
 		SlSetLength(len);

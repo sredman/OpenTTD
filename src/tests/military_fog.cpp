@@ -14,6 +14,7 @@
 #include "../roadveh.h"
 #include "../town.h"
 #include "../industry.h"
+#include "../industry_map.h"
 #include "../map_func.h"
 #include "../clear_map.h"
 #include "../fileio_func.h"
@@ -24,9 +25,11 @@
 #include "../company_base.h"
 #include "../company_func.h"
 #include "../company_manager_face.h"
+#include "../object_base.h"
 
 #include "../network/network.h"
 #include "../saveload/saveload_func.h"
+#include "../tile_cmd.h"
 #include "../void_map.h"
 #include "../vehicle_func.h"
 #include "mock_environment.h"
@@ -58,6 +61,9 @@ static void ResetFogTestEnvironment()
 		_valid_searchpaths.push_back(Searchpath::WorkingDir);
 	}
 	_vehicle_pool.CleanPool();
+	_town_pool.CleanPool();
+	_industry_pool.CleanPool();
+	_object_pool.CleanPool();
 	Map::Allocate(256, 256);
 	for (TileIndex t = TileIndex{0}; t < TileIndex{Map::Size()}; t++) {
 		if (IsInnerTile(t)) {
@@ -1026,4 +1032,251 @@ TEST_CASE("MilitaryFog - Visibility loss invalidates drawn vehicle without manua
 	CHECK(found_vehicle_invalidation);
 
 	ResetMilitaryScenario();
+}
+
+TEST_CASE("MilitaryFog - Initial stationary knowledge preservation across UI surfaces")
+{
+	ResetFogTestEnvironment();
+
+	/* Create starting town and industry */
+	TileIndex town_tile = TileXY(50, 50);
+	REQUIRE(Town::CanAllocateItem());
+	Town *town = Town::Create(town_tile);
+	REQUIRE(town != nullptr);
+	town->name = "InitialTown";
+	town->cache.population = 1200;
+	town->cache.num_houses = 35;
+	town->larger_town = true;
+
+	TileIndex ind_tile = TileXY(80, 80);
+	REQUIRE(Industry::CanAllocateItem());
+	Industry *ind = Industry::Create(ind_tile);
+	REQUIRE(ind != nullptr);
+	ind->town = town;
+	ind->type = 1;
+	ind->location.tile = ind_tile;
+	ind->owner = OWNER_NONE;
+	ind->random_colour = Colours::Blue;
+	ind->cached_name = "InitialIndustry";
+
+	/* Initialize fog: creates initial knowledge snapshots of starting entities */
+	MilitaryFog::Initialize();
+
+	uint8_t side0 = 0;
+	/* Verify tiles are not scouted */
+	CHECK(MilitaryFog::GetTileFogStatus(side0, town_tile) == FOG_NEVER_SCOUTED);
+	CHECK_FALSE(MilitaryFog::IsTileScouted(side0, town_tile));
+	CHECK(MilitaryFog::GetTileFogStatus(side0, ind_tile) == FOG_NEVER_SCOUTED);
+	CHECK_FALSE(MilitaryFog::IsTileScouted(side0, ind_tile));
+
+	/* Verify snapshots preserve initial knowledge while unscouted */
+	const TownSnapshot *ts = MilitaryFog::GetTownSnapshot(side0, town->index);
+	REQUIRE(ts != nullptr);
+	CHECK(ts->exists);
+	CHECK(ts->population == 1200);
+	CHECK(ts->num_houses == 35);
+	CHECK(ts->name == "InitialTown");
+	CHECK(ts->xy == town_tile);
+	CHECK(ts->larger_town);
+
+	const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshot(side0, ind->index);
+	REQUIRE(is != nullptr);
+	CHECK(is->exists);
+	CHECK(is->type == 1);
+	CHECK(is->location == ind_tile);
+	CHECK(is->colour == Colours::Blue);
+	CHECK(is->name == "InitialIndustry");
+
+	/* Clean up */
+	delete ind;
+	delete town;
+	ResetFogTestEnvironment();
+}
+
+TEST_CASE("MilitaryFog - Decoupled stale stationary snapshots survive live pool deletion and ID reuse")
+{
+	ResetFogTestEnvironment();
+
+	TileIndex ind_tile = TileXY(70, 70);
+	REQUIRE(Industry::CanAllocateItem());
+	Industry *ind = Industry::Create(ind_tile);
+	REQUIRE(ind != nullptr);
+	ind->type = 0;
+	ind->location.tile = ind_tile;
+	ind->owner = OWNER_NONE;
+	ind->random_colour = Colours::Red;
+	ind->cached_name = "StaleIndustry";
+	IndustryID saved_id = ind->index;
+	MakeIndustry(ind_tile, saved_id, 0, 0, WaterClass::Invalid);
+
+	/* Initialize fog */
+	MilitaryFog::Initialize();
+
+	/* Scout the tile */
+	MilitaryFog::RefreshStationarySnapshot(0, ind_tile);
+	const IndustrySnapshot *is_initial = MilitaryFog::GetIndustrySnapshot(0, saved_id);
+	REQUIRE(is_initial != nullptr);
+	CHECK(is_initial->exists);
+	CHECK(is_initial->colour == Colours::Red);
+
+	/* Delete industry from live pool and clear live tile */
+	delete ind;
+	MakeClear(ind_tile, ClearGround::Grass, 0);
+	REQUIRE(Industry::GetIfValid(saved_id) == nullptr);
+
+	/* Within ActiveSnapshotScope, inspecting tile does not dereference deleted live pool object */
+	{
+		ActiveSnapshotScope scope(0);
+		CHECK(ActiveSnapshotScope::IsActive());
+		CHECK(ActiveSnapshotScope::GetCurrentSide() == 0);
+
+		const IndustrySnapshot *is_stale = MilitaryFog::GetIndustrySnapshot(0, saved_id);
+		REQUIRE(is_stale != nullptr);
+		CHECK(is_stale->exists);
+		CHECK(is_stale->colour == Colours::Red);
+		CHECK(is_stale->location == ind_tile);
+
+		TileDesc td{};
+		GetTileDesc(ind_tile, td);
+		CHECK(td.owner[0] == OWNER_NONE);
+
+		CargoArray acceptance{};
+		CargoTypes always_accepted{};
+		AddAcceptedCargo(ind_tile, acceptance, always_accepted);
+
+		_tile_type_procs[GetTileType(ind_tile)]->get_foundation_proc(ind_tile, SLOPE_FLAT);
+	}
+	CHECK_FALSE(ActiveSnapshotScope::IsActive());
+
+	/* ID Reuse: create a new industry elsewhere reusing the ID */
+	TileIndex new_tile = TileXY(95, 95);
+	Industry *reused_ind = Industry::CreateAtIndex(saved_id, new_tile);
+	REQUIRE(reused_ind != nullptr);
+	reused_ind->type = 2;
+	reused_ind->random_colour = Colours::Green;
+	reused_ind->cached_name = "ReusedIndustry";
+	MakeIndustry(new_tile, saved_id, 0, 0, WaterClass::Invalid);
+
+	/* ActiveSnapshotScope must not be polluted by reused pool object */
+	{
+		ActiveSnapshotScope scope(0);
+		const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshot(0, saved_id);
+		REQUIRE(is != nullptr);
+		CHECK(is->colour == Colours::Red);
+		CHECK(is->location == ind_tile);
+	}
+
+	delete reused_ind;
+	MakeClear(new_tile, ClearGround::Grass, 0);
+	ResetFogTestEnvironment();
+}
+
+TEST_CASE("MilitaryFog - Rescouting discovers industry closure and updates stationary snapshot")
+{
+	ResetFogTestEnvironment();
+
+	TileIndex ind_tile = TileXY(140, 100);
+	REQUIRE(Industry::CanAllocateItem());
+	Industry *ind = Industry::Create(ind_tile);
+	REQUIRE(ind != nullptr);
+	ind->type = 0;
+	ind->location.tile = ind_tile;
+	ind->owner = OWNER_NONE;
+	ind->random_colour = Colours::Yellow;
+	IndustryID ind_id = ind->index;
+	MakeIndustry(ind_tile, ind_id, 0, 0, WaterClass::Invalid);
+
+	MilitaryFog::Initialize();
+
+	/* Initial scout reveals industry */
+	MilitaryFog::RefreshStationarySnapshot(0, ind_tile);
+	const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshot(0, ind_id);
+	REQUIRE(is != nullptr);
+	CHECK(is->exists);
+
+	/* Industry closes under fog */
+	delete ind;
+	MakeClear(ind_tile, ClearGround::Grass, 0);
+
+	/* Stale snapshot still exists prior to rescouting */
+	CHECK(MilitaryFog::GetIndustrySnapshot(0, ind_id) != nullptr);
+
+	/* Rescout tile */
+	MilitaryFog::RefreshStationarySnapshot(0, ind_tile);
+
+	/* Post-rescout: snapshot confirmed absent */
+	CHECK(MilitaryFog::GetIndustrySnapshot(0, ind_id) == nullptr);
+
+	ResetFogTestEnvironment();
+}
+
+TEST_CASE("MilitaryFog - Full stationary snapshot persistence across save/load with side isolation")
+{
+	ResetFogTestEnvironment();
+
+	uint8_t side0 = 0;
+	uint8_t side1 = 1;
+
+	SideIntelligence &intel0 = MilitaryFog::GetSideIntelligence(side0);
+	intel0.town_snapshots.resize(4);
+	TownSnapshot &ts0 = intel0.town_snapshots[2];
+	ts0.exists = true;
+	ts0.population = 4500;
+	ts0.num_houses = 120;
+	ts0.name = "IsolatedTownSide0";
+	ts0.xy = TileXY(110, 110);
+	ts0.larger_town = true;
+
+	intel0.industry_snapshots.resize(4);
+	IndustrySnapshot &is0 = intel0.industry_snapshots[1];
+	is0.exists = true;
+	is0.type = 3;
+	is0.location = TileXY(115, 115);
+	is0.prod_level = 16;
+	is0.owner = OWNER_NONE;
+	is0.colour = Colours::DarkBlue;
+	is0.name = "IsolatedIndustrySide0";
+
+	/* Side 1 has independent snapshot */
+	SideIntelligence &intel1 = MilitaryFog::GetSideIntelligence(side1);
+	intel1.town_snapshots.resize(4);
+	intel1.industry_snapshots.resize(4);
+
+	SaveLoadResult save_res = SaveOrLoad("test_stationary_persistence.sav", SaveLoadOperation::Save, DetailedFileType::GameFile, Subdirectory::None, false);
+	REQUIRE(save_res == SaveLoadResult::Ok);
+
+	MilitaryFog::Reset();
+	REQUIRE_FALSE(MilitaryFog::IsActive());
+
+	SaveLoadResult load_res = SaveOrLoad("test_stationary_persistence.sav", SaveLoadOperation::Load, DetailedFileType::GameFile, Subdirectory::None, false);
+	REQUIRE(load_res == SaveLoadResult::Ok);
+	std::remove("test_stationary_persistence.sav");
+
+	REQUIRE(MilitaryFog::IsActive());
+
+	/* Verify side 0 restored */
+	const TownSnapshot *restored_ts0 = MilitaryFog::GetTownSnapshot(side0, TownID{2});
+	REQUIRE(restored_ts0 != nullptr);
+	CHECK(restored_ts0->exists);
+	CHECK(restored_ts0->population == 4500);
+	CHECK(restored_ts0->num_houses == 120);
+	CHECK(restored_ts0->name == "IsolatedTownSide0");
+	CHECK(restored_ts0->xy == TileXY(110, 110));
+	CHECK(restored_ts0->larger_town);
+
+	const IndustrySnapshot *restored_is0 = MilitaryFog::GetIndustrySnapshot(side0, IndustryID{1});
+	REQUIRE(restored_is0 != nullptr);
+	CHECK(restored_is0->exists);
+	CHECK(restored_is0->type == 3);
+	CHECK(restored_is0->location == TileXY(115, 115));
+	CHECK(restored_is0->prod_level == 16);
+	CHECK(restored_is0->owner == OWNER_NONE);
+	CHECK(restored_is0->colour == Colours::DarkBlue);
+	CHECK(restored_is0->name == "IsolatedIndustrySide0");
+
+	/* Verify side isolation: side 1 does not see side 0's snapshots */
+	CHECK(MilitaryFog::GetTownSnapshot(side1, TownID{2}) == nullptr);
+	CHECK(MilitaryFog::GetIndustrySnapshot(side1, IndustryID{1}) == nullptr);
+
+	ResetFogTestEnvironment();
 }

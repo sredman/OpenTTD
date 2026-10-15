@@ -3275,23 +3275,25 @@ static void DrawTile_Station(TileInfo *ti)
 
 		if (IsCustomStationSpecIndex(ti->tile)) {
 			/* look for customization */
-			st = BaseStation::GetByTile(ti->tile);
-			statspec = st->speclist[GetCustomStationSpecIndex(ti->tile)].spec;
+			st = BaseStation::GetIfValid(GetStationIndex(ti->tile));
+			if (st != nullptr) {
+				statspec = st->speclist[GetCustomStationSpecIndex(ti->tile)].spec;
 
-			if (statspec != nullptr) {
-				tile_layout = GetStationGfx(ti->tile);
+				if (statspec != nullptr) {
+					tile_layout = GetStationGfx(ti->tile);
 
-				if (statspec->callback_mask.Test(StationCallbackMask::DrawTileLayout)) {
-					uint16_t callback = GetStationCallback(CBID_STATION_DRAW_TILE_LAYOUT, 0, 0, statspec, st, ti->tile);
-					if (callback != CALLBACK_FAILED) tile_layout = (callback & ~1) + to_underlying(GetRailStationAxis(ti->tile));
-				}
+					if (statspec->callback_mask.Test(StationCallbackMask::DrawTileLayout)) {
+						uint16_t callback = GetStationCallback(CBID_STATION_DRAW_TILE_LAYOUT, 0, 0, statspec, st, ti->tile);
+						if (callback != CALLBACK_FAILED) tile_layout = (callback & ~1) + to_underlying(GetRailStationAxis(ti->tile));
+					}
 
-				/* Ensure the chosen tile layout is valid for this custom station */
-				if (!statspec->renderdata.empty()) {
-					layout = &statspec->renderdata[tile_layout < statspec->renderdata.size() ? tile_layout : (uint)GetRailStationAxis(ti->tile)];
-					if (!layout->NeedsPreprocessing()) {
-						t = layout;
-						layout = nullptr;
+					/* Ensure the chosen tile layout is valid for this custom station */
+					if (!statspec->renderdata.empty()) {
+						layout = &statspec->renderdata[tile_layout < statspec->renderdata.size() ? tile_layout : (uint)GetRailStationAxis(ti->tile)];
+						if (!layout->NeedsPreprocessing()) {
+							t = layout;
+							layout = nullptr;
+						}
 					}
 				}
 			}
@@ -3306,7 +3308,8 @@ static void DrawTile_Station(TileInfo *ti)
 		gfx = GetAirportGfx(ti->tile);
 		if (gfx >= NEW_AIRPORTTILE_OFFSET) {
 			const AirportTileSpec *ats = AirportTileSpec::Get(gfx);
-			if (ats->grf_prop.HasSpriteGroups() && DrawNewAirportTile(ti, Station::GetByTile(ti->tile), ats)) {
+			Station *st_air = Station::GetIfValid(GetStationIndex(ti->tile));
+			if (st_air != nullptr && ats->grf_prop.HasSpriteGroups() && DrawNewAirportTile(ti, st_air, ats)) {
 				return;
 			}
 			/* No sprite group (or no valid one) found, meaning no graphics associated.
@@ -3446,19 +3449,21 @@ static void DrawTile_Station(TileInfo *ti)
 		RoadStopDrawModes stop_draw_mode{};
 		if (stopspec != nullptr) {
 			stop_draw_mode = stopspec->draw_mode;
-			st = BaseStation::GetByTile(ti->tile);
-			std::array<int32_t, 1> regs100;
-			auto result = GetRoadStopLayout(ti, stopspec, st, type, view, regs100);
-			if (result.has_value()) {
-				if (stopspec->flags.Test(RoadStopSpecFlag::DrawModeRegister)) {
-					stop_draw_mode = static_cast<RoadStopDrawModes>(regs100[0]);
+			st = BaseStation::GetIfValid(GetStationIndex(ti->tile));
+			if (st != nullptr) {
+				std::array<int32_t, 1> regs100;
+				auto result = GetRoadStopLayout(ti, stopspec, st, type, view, regs100);
+				if (result.has_value()) {
+					if (stopspec->flags.Test(RoadStopSpecFlag::DrawModeRegister)) {
+						stop_draw_mode = static_cast<RoadStopDrawModes>(regs100[0]);
+					}
+					if (type == StationType::RoadWaypoint && stop_draw_mode.Test(RoadStopDrawMode::WaypGround)) {
+						draw_ground = true;
+					}
+					processor = std::move(*result);
+					tmp_layout = processor.GetLayout();
+					t = &tmp_layout;
 				}
-				if (type == StationType::RoadWaypoint && stop_draw_mode.Test(RoadStopDrawMode::WaypGround)) {
-					draw_ground = true;
-				}
-				processor = std::move(*result);
-				tmp_layout = processor.GetLayout();
-				t = &tmp_layout;
 			}
 		}
 
@@ -3615,7 +3620,9 @@ void FillTileDescRailStation(TileIndex tile, TileDesc &td)
 
 void FillTileDescAirport(TileIndex tile, TileDesc &td)
 {
-	const AirportSpec *as = Station::GetByTile(tile)->airport.GetSpec();
+	const Station *st = Station::GetIfValid(GetStationIndex(tile));
+	if (st == nullptr) return;
+	const AirportSpec *as = st->airport.GetSpec();
 	td.airport_class = AirportClass::Get(as->class_index)->name;
 	td.airport_name = as->name;
 
@@ -3635,7 +3642,10 @@ void FillTileDescAirport(TileIndex tile, TileDesc &td)
 static void GetTileDesc_Station(TileIndex tile, TileDesc &td)
 {
 	td.owner[0] = GetTileOwner(tile);
-	td.build_date = BaseStation::GetByTile(tile)->build_date;
+	const BaseStation *bst = BaseStation::GetIfValid(GetStationIndex(tile));
+	if (bst != nullptr) {
+		td.build_date = bst->build_date;
+	}
 
 	if (IsAnyRoadStop(tile)) FillTileDescRoadStop(tile, td);
 	if (HasStationRail(tile)) FillTileDescRailStation(tile, td);
@@ -3651,11 +3661,16 @@ static void GetTileDesc_Station(TileIndex tile, TileDesc &td)
 		case StationType::Truck:    str = STR_LAI_STATION_DESCRIPTION_TRUCK_LOADING_AREA; break;
 		case StationType::Bus:      str = STR_LAI_STATION_DESCRIPTION_BUS_STATION; break;
 		case StationType::Oilrig: {
-			const Industry *i = Station::GetByTile(tile)->industry;
-			const IndustrySpec *is = GetIndustrySpec(i->type);
-			td.owner[0] = i->owner;
-			str = is->name;
-			if (is->grf_prop.HasGrfFile()) td.grf = GetGRFConfig(is->grf_prop.grfid)->GetName();
+			const Station *st = Station::GetIfValid(GetStationIndex(tile));
+			const Industry *i = (st != nullptr) ? st->industry : nullptr;
+			if (i != nullptr) {
+				const IndustrySpec *is = GetIndustrySpec(i->type);
+				td.owner[0] = i->owner;
+				str = is->name;
+				if (is->grf_prop.HasGrfFile()) td.grf = GetGRFConfig(is->grf_prop.grfid)->GetName();
+			} else {
+				str = STR_LAI_STATION_DESCRIPTION_SHIP_DOCK;
+			}
 			break;
 		}
 		case StationType::Dock:     str = STR_LAI_STATION_DESCRIPTION_SHIP_DOCK; break;

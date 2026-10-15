@@ -91,6 +91,7 @@
 #include "network/network_func.h"
 #include "framerate_type.h"
 #include "viewport_cmd.h"
+#include "military_fog.h"
 
 #include <forward_list>
 #include <stack>
@@ -1313,7 +1314,12 @@ static void ViewportAddLandscape()
 				_vd.last_foundation_child[FoundationPart::Halftile] = LAST_CHILD_NONE;
 
 				_tile_type_procs[tile_type]->draw_tile_proc(&_cur_ti);
-				if (_cur_ti.tile != INVALID_TILE) DrawTileSelection(&_cur_ti);
+				if (_cur_ti.tile != INVALID_TILE) {
+					DrawTileSelection(&_cur_ti);
+					if (MilitaryFog::IsActive() && !MilitaryFog::IsTileCurrentlyVisibleForLocal(_cur_ti.tile)) {
+						DrawTileSelectionRect(&_cur_ti, PALETTE_TO_TRANSPARENT);
+					}
+				}
 			}
 		}
 	}
@@ -1393,6 +1399,27 @@ static void ViewportAddTownStrings(DrawPixelInfo *dpi, const std::vector<const T
 }
 
 /**
+ * Add town snapshot strings to a viewport when military fog is active.
+ * @param dpi Current viewport area.
+ * @param town_snapshots List of snapshots to add.
+ * @param small Add small versions of strings.
+ */
+static void ViewportAddTownSnapshotStrings(DrawPixelInfo *dpi, const std::vector<TownSnapshot> &town_snapshots, bool small)
+{
+	ViewportStringFlags flags{};
+	if (small) flags.Set({ViewportStringFlag::Small, ViewportStringFlag::Shadow});
+
+	for (const auto &ts : town_snapshots) {
+		if (!ts.exists || !IsValidTile(ts.xy)) continue;
+
+		std::string *str = ViewportAddString(dpi, &ts.sign, flags, Colours::Invalid);
+		if (str == nullptr) continue;
+
+		*str = ts.GetViewportString(small);
+	}
+}
+
+/**
  * Add sign strings to a viewport.
  * @param dpi Current viewport area.
  * @param signs List of signs to add.
@@ -1446,6 +1473,48 @@ static void ViewportAddStationStrings(DrawPixelInfo *dpi, const std::vector<cons
 	}
 }
 
+/**
+ * Add station and waypoint snapshot strings to a viewport when military fog is active.
+ * @param dpi Current viewport area.
+ * @param station_snapshots List of snapshots to add.
+ * @param small Add small versions of strings.
+ * @param show_stations Whether to show station names.
+ * @param show_waypoints Whether to show waypoint names.
+ * @param show_competitors Whether to show competitor station and waypoint names.
+ */
+static void ViewportAddStationSnapshotStrings(DrawPixelInfo *dpi, const std::vector<StationSnapshot> &station_snapshots, bool small, bool show_stations, bool show_waypoints, bool show_competitors)
+{
+	/* Transparent station signs have colour text instead of a colour panel. */
+	ViewportStringFlags flags{IsTransparencySet(TransparencyOption::Signs) ? ViewportStringFlag::TextColour : ViewportStringFlag::ColourRect};
+	if (small) flags.Set(ViewportStringFlag::Small);
+
+	for (const auto &ss : station_snapshots) {
+		if (!ss.exists || !IsValidTile(ss.xy)) continue;
+
+		if (ss.is_waypoint) {
+			if (!show_waypoints) continue;
+		} else {
+			if (!show_stations) continue;
+
+			/* If no facilities are present the station is a ghost station. */
+			StationFacilities facilities = ss.facilities;
+			if (facilities.None()) facilities = STATION_FACILITY_GHOST;
+
+			if (!facilities.Any(_facility_display_opt)) continue;
+		}
+
+		/* Don't draw if station is owned by another company and competitor station names are hidden. Stations owned by none are never ignored. */
+		if (!show_competitors && _local_company != ss.owner && ss.owner != OWNER_NONE) continue;
+
+		Colours colour = ss.GetDisplayColour();
+
+		std::string *str = ViewportAddString(dpi, &ss.sign, flags, colour);
+		if (str == nullptr) continue;
+
+		*str = ss.GetViewportString(small);
+	}
+}
+
 static void ViewportAddKdtreeSigns(DrawPixelInfo *dpi)
 {
 	Rect search_rect{ dpi->left, dpi->top, dpi->left + dpi->width, dpi->top + dpi->height };
@@ -1466,6 +1535,7 @@ static void ViewportAddKdtreeSigns(DrawPixelInfo *dpi)
 		switch (item.type) {
 			case ViewportSignKdtreeItem::VKI_STATION: {
 				if (!show_stations) break;
+				if (MilitaryFog::IsActive() && (ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide()) < MAX_MILITARY_SIDES) break;
 				const BaseStation *st = BaseStation::Get(std::get<StationID>(item.id));
 
 				/* If no facilities are present the station is a ghost station. */
@@ -1483,6 +1553,7 @@ static void ViewportAddKdtreeSigns(DrawPixelInfo *dpi)
 
 			case ViewportSignKdtreeItem::VKI_WAYPOINT: {
 				if (!show_waypoints) break;
+				if (MilitaryFog::IsActive() && (ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide()) < MAX_MILITARY_SIDES) break;
 				const BaseStation *st = BaseStation::Get(std::get<StationID>(item.id));
 
 				/* Don't draw if station is owned by another company and competitor station names are hidden. Stations owned by none are never ignored. */
@@ -1494,6 +1565,7 @@ static void ViewportAddKdtreeSigns(DrawPixelInfo *dpi)
 
 			case ViewportSignKdtreeItem::VKI_TOWN:
 				if (!show_towns) break;
+				if (MilitaryFog::IsActive() && (ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide()) < MAX_MILITARY_SIDES) break;
 				towns.push_back(Town::Get(std::get<TownID>(item.id)));
 				break;
 
@@ -1519,13 +1591,34 @@ static void ViewportAddKdtreeSigns(DrawPixelInfo *dpi)
 	bool small = dpi->zoom >= ZoomLevel::Out4x;
 
 	/* Layering order (bottom to top): Town names, signs, stations */
-	ViewportAddTownStrings(dpi, towns, small);
+	if (MilitaryFog::IsActive()) {
+		uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
+		if (side < MAX_MILITARY_SIDES) {
+			if (show_towns) {
+				ViewportAddTownSnapshotStrings(dpi, MilitaryFog::GetSideIntelligence(side).town_snapshots, small);
+			}
+		} else {
+			ViewportAddTownStrings(dpi, towns, small);
+		}
+	} else {
+		ViewportAddTownStrings(dpi, towns, small);
+	}
 
 	/* Do not draw signs nor station names if they are set invisible */
 	if (IsInvisibilitySet(TransparencyOption::Signs)) return;
 
 	ViewportAddSignStrings(dpi, signs, small);
-	ViewportAddStationStrings(dpi, stations, small);
+
+	if (MilitaryFog::IsActive()) {
+		uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
+		if (side < MAX_MILITARY_SIDES) {
+			ViewportAddStationSnapshotStrings(dpi, MilitaryFog::GetSideIntelligence(side).station_snapshots, small, show_stations, show_waypoints, show_competitors);
+		} else {
+			ViewportAddStationStrings(dpi, stations, small);
+		}
+	} else {
+		ViewportAddStationStrings(dpi, stations, small);
+	}
 }
 
 
@@ -1813,6 +1906,8 @@ static void ViewportDrawStrings(ZoomLevel zoom, const StringSpriteToDrawVector *
 
 void ViewportDoDraw(const Viewport &vp, int left, int top, int right, int bottom)
 {
+	ActiveSnapshotScope snapshot_scope(MilitaryFog::GetLocalIntelligenceSide());
+
 	_vd.dpi.zoom = vp.zoom;
 	int mask = ScaleByZoom(-1, vp.zoom);
 
@@ -2085,6 +2180,8 @@ static bool MarkViewportDirty(const Viewport &vp, int left, int top, int right, 
 	return true;
 }
 
+ViewportDirtyHook _viewport_dirty_hook = nullptr;
+
 /**
  * Mark all viewports that display an area as dirty (in need of repaint).
  * @param left   Left   edge of area to repaint. (viewport coordinates, that is wrt. #ZoomLevel::Min)
@@ -2096,6 +2193,10 @@ static bool MarkViewportDirty(const Viewport &vp, int left, int top, int right, 
  */
 bool MarkAllViewportsDirty(int left, int top, int right, int bottom)
 {
+	if (_viewport_dirty_hook != nullptr) {
+		_viewport_dirty_hook(left, top, right, bottom);
+	}
+
 	bool dirty = false;
 
 	for (const Window *w : Window::Iterate()) {

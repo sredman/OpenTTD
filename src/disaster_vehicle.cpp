@@ -27,6 +27,7 @@
 
 #include "aircraft.h"
 #include "disaster_vehicle.h"
+#include "military_fog.h"
 #include "industry.h"
 #include "station_base.h"
 #include "command_func.h"
@@ -122,16 +123,21 @@ static constexpr DirectionIndexArray<SpriteID> _disaster_images[] = {
 	_disaster_images_target_marker,                             ///< military target marker
 };
 
-void DisasterVehicle::UpdateImage()
+void DisasterVehicle::GetImage(Direction direction, [[maybe_unused]] EngineImageType image_type, VehicleSpriteSeq *result) const
 {
 	SpriteID img = this->image_override;
-	if (img == 0) img = _disaster_images[this->subtype][this->direction];
-	this->sprite_cache.sprite_seq.Set(img);
+	if (img == 0) img = _disaster_images[this->subtype][direction];
+	result->Set(img);
 	if (this->subtype == ST_MILITARY_AIRCRAFT || this->subtype == ST_MILITARY_TARGET_MARKER) {
 		uint8_t side = this->GetMilitarySide();
 		PaletteID pal = (side == 0) ? PALETTE_TO_BLUE : PALETTE_TO_RED;
-		this->sprite_cache.sprite_seq.seq[0].pal = pal;
+		result->seq[0].pal = pal;
 	}
+}
+
+void DisasterVehicle::UpdateImage()
+{
+	this->GetImage(this->direction, EngineImageType::OnMap, &this->sprite_cache.sprite_seq);
 }
 
 /**
@@ -760,10 +766,170 @@ DisasterVehicle *FindNearestEligibleEnemyMarker(const DisasterVehicle *aircraft)
 	return best_marker;
 }
 
+/**
+ * Determine the 8-sector Direction towards a relative offset (dx, dy).
+ * Each of the 8 directions covers a 45-degree sector centered on that direction.
+ * @param dx          Relative X pixel delta.
+ * @param dy          Relative Y pixel delta.
+ * @param current_dir Current direction fallback if delta is zero.
+ * @return Best matching 8-sector Direction.
+ */
+static Direction GetMilitaryDirectionTowards(int dx, int dy, Direction current_dir)
+{
+	if (dx == 0 && dy == 0) return current_dir;
+
+	int abs_dx = std::abs(dx);
+	int abs_dy = std::abs(dy);
+
+	/* tan(22.5 deg) ~ 0.414, approximated as 5 / 12 ~ 0.4167 */
+	if (abs_dx * 5 >= abs_dy * 12) {
+		return (dx > 0) ? Direction::SW : Direction::NE;
+	}
+	if (abs_dy * 5 >= abs_dx * 12) {
+		return (dy > 0) ? Direction::SE : Direction::NW;
+	}
+
+	if (dx > 0 && dy > 0) return Direction::S;
+	if (dx > 0 && dy < 0) return Direction::W;
+	if (dx < 0 && dy > 0) return Direction::E;
+	return Direction::N;
+}
+
 /** Autonomous military aircraft tick handling. @copydoc DisasterVehicleTickProc */
 static bool DisasterTick_MilitaryAircraft(DisasterVehicle *v)
 {
 	v->tick_counter++;
+
+	if (MilitaryFog::IsActive()) {
+		MilitaryFog::UpdateAircraftScouting(v);
+
+		uint8_t side = v->GetMilitarySide();
+		const SideIntelligence &intel = MilitaryFog::GetSideIntelligence(side);
+
+		/* Validate existing target if set */
+		if (v->big_ufo_destroyer_target != VehicleID::Invalid()) {
+			bool still_known = false;
+			for (const auto &c : intel.contacts) {
+				if (c.vehicle_id == v->big_ufo_destroyer_target) {
+					still_known = true;
+					break;
+				}
+			}
+			if (!still_known) {
+				v->big_ufo_destroyer_target = VehicleID::Invalid();
+			}
+		}
+
+		if (v->big_ufo_destroyer_target == VehicleID::Invalid()) {
+			/* If no target, select nearest known enemy contact */
+			const MilitaryContact *contact = MilitaryFog::FindNearestEligibleEnemyContact(v);
+			if (contact != nullptr) {
+				v->big_ufo_destroyer_target = contact->vehicle_id;
+				v->dest_tile = contact->last_tile;
+				v->age = TimerGameCalendar::Date{0};
+				v->SetMilitaryMovementState(MMS_MOVING);
+			} else {
+				/* Exploration behavior: head towards nearest never-scouted tile */
+				if (v->dest_tile != INVALID_TILE && (intel.never_scouted_count == 0 || intel.is_scouted.empty() || intel.is_scouted[v->dest_tile.base()] != 0)) {
+					v->dest_tile = INVALID_TILE;
+				}
+
+				if (v->dest_tile == INVALID_TILE) {
+					TileIndex explore_tile = MilitaryFog::FindNearestNeverScoutedTile(v);
+					if (explore_tile != INVALID_TILE) {
+						v->big_ufo_destroyer_target = VehicleID::Invalid();
+						v->dest_tile = explore_tile;
+						v->age = TimerGameCalendar::Date{0};
+						v->SetMilitaryMovementState(MMS_MOVING);
+					} else {
+						/* Entire map scouted and no known enemies: idle safely */
+						v->big_ufo_destroyer_target = VehicleID::Invalid();
+						v->dest_tile = INVALID_TILE;
+						v->age = TimerGameCalendar::Date{0};
+						v->SetMilitaryMovementState(MMS_IDLE);
+						return true;
+					}
+				}
+			}
+		}
+
+		int target_x = 0;
+		int target_y = 0;
+		bool is_contact = false;
+
+		if (v->big_ufo_destroyer_target != VehicleID::Invalid()) {
+			for (const auto &c : intel.contacts) {
+				if (c.vehicle_id == v->big_ufo_destroyer_target) {
+					target_x = c.last_x;
+					target_y = c.last_y;
+					is_contact = true;
+					break;
+				}
+			}
+		} else if (v->dest_tile != INVALID_TILE) {
+			target_x = TileX(v->dest_tile) * TILE_SIZE + TILE_SIZE / 2;
+			target_y = TileY(v->dest_tile) * TILE_SIZE + TILE_SIZE / 2;
+		} else {
+			v->SetMilitaryMovementState(MMS_IDLE);
+			return true;
+		}
+
+		int dx = target_x - v->x_pos;
+		int dy = target_y - v->y_pos;
+		int dist_x = std::abs(dx);
+		int dist_y = std::abs(dy);
+
+		if (dist_x + dist_y <= 8) {
+			if (is_contact) {
+				bool cleared = MilitaryFog::CheckArrivalAndClearEmptyContact(v);
+				if (cleared) {
+					/* Contact location revisited empty: contact was cleared, re-evaluate next tick */
+					v->SetMilitaryMovementState(MMS_IDLE);
+					v->age = TimerGameCalendar::Date{0};
+					return true;
+				}
+			} else {
+				v->dest_tile = INVALID_TILE;
+			}
+			v->SetMilitaryMovementState(MMS_ARRIVED);
+			v->age = TimerGameCalendar::Date{0};
+			return true;
+		}
+
+		/* Small deterministic straight-line step */
+		int abs_dx = dist_x;
+		int abs_dy = dist_y;
+		int step_x = 0;
+		int step_y = 0;
+
+		if (abs_dx >= abs_dy) {
+			step_x = (dx > 0) ? 1 : (dx < 0 ? -1 : 0);
+			int err = v->age.base() + abs_dy;
+			if (err >= abs_dx) {
+				err -= abs_dx;
+				step_y = (dy > 0) ? 1 : (dy < 0 ? -1 : 0);
+			}
+			v->age = TimerGameCalendar::Date{err};
+		} else {
+			step_y = (dy > 0) ? 1 : (dy < 0 ? -1 : 0);
+			int err = v->age.base() + abs_dx;
+			if (err >= abs_dy) {
+				err -= abs_dy;
+				step_x = (dx > 0) ? 1 : (dx < 0 ? -1 : 0);
+			}
+			v->age = TimerGameCalendar::Date{err};
+		}
+
+		/* Turn towards the target */
+		v->direction = GetMilitaryDirectionTowards(dx, dy, v->direction);
+		v->SetMilitaryMovementState(MMS_MOVING);
+
+		int new_x = Clamp(v->x_pos + step_x, 0, (int)(Map::MaxX() * TILE_SIZE));
+		int new_y = Clamp(v->y_pos + step_y, 0, (int)(Map::MaxY() * TILE_SIZE));
+
+		v->UpdatePosition(new_x, new_y, GetAircraftFlightLevel(v));
+		return true;
+	}
 
 	DisasterVehicle *target = nullptr;
 	if (v->big_ufo_destroyer_target != VehicleID::Invalid()) {
@@ -1191,14 +1357,11 @@ bool SetupMilitaryScenario()
 	/* Refuse insufficient dimensions before changing the world. Minimum 256x256 required. */
 	if (Map::SizeX() < 256 || Map::SizeY() < 256) return false;
 
-	/* Remove existing military units/markers if any */
-	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
-		if (v->subtype == ST_MILITARY_AIRCRAFT ||
-				v->subtype == ST_MILITARY_AIRCRAFT_SHADOW ||
-				v->subtype == ST_MILITARY_TARGET_MARKER) {
-			delete v;
-		}
-	}
+	/* Reset any existing military scenario and fog */
+	ResetMilitaryScenario();
+
+	/* Enable and initialize military fog of war */
+	MilitaryFog::Initialize();
 
 	/* Fixed fixture:
 	 * Friendly marker (Side 0) at (80, 100).
@@ -1210,6 +1373,21 @@ bool SetupMilitaryScenario()
 	SpawnMilitaryTargetMarker(140 * TILE_SIZE, 100 * TILE_SIZE, 1);
 	SpawnMilitaryTargetMarker(180 * TILE_SIZE, 120 * TILE_SIZE, 1);
 
-	SpawnMilitaryAircraft(100 * TILE_SIZE, 100 * TILE_SIZE, Direction::E, 0);
+	SpawnMilitaryAircraft(100 * TILE_SIZE, 100 * TILE_SIZE, Direction::SW, 0);
 	return true;
+}
+
+/* Reset fixed military demonstration scenario. */
+void ResetMilitaryScenario()
+{
+	/* Remove existing military units/markers if any */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT ||
+				v->subtype == ST_MILITARY_AIRCRAFT_SHADOW ||
+				v->subtype == ST_MILITARY_TARGET_MARKER) {
+			delete v;
+		}
+	}
+
+	MilitaryFog::Reset();
 }

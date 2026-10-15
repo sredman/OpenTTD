@@ -31,6 +31,7 @@
 #include "timer/timer_window.h"
 #include "smallmap_gui.h"
 #include "core/enum_type.hpp"
+#include "military_fog.h"
 
 #include "widgets/smallmap_widget.h"
 
@@ -629,8 +630,58 @@ static constexpr VehicleTypeIndexArray<PixelColour, VehicleType::End> _vehicle_t
 	PC_RED, PC_YELLOW, PC_LIGHT_BLUE, PC_WHITE, PC_BLACK, PC_RED
 };
 
+/**
+ * Get the industry type for a tile in smallmap view, respecting military fog snapshots if active.
+ * @param tile Tile to inspect
+ * @return IndustryType or IT_INVALID if tile has no known industry
+ */
+IndustryType GetSmallMapIndustryType(TileIndex tile)
+{
+	if (MilitaryFog::IsActive()) {
+		uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
+		if (side < MAX_MILITARY_SIDES) {
+			const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshotAtTile(side, tile);
+			if (is != nullptr) return is->type;
+			return IT_INVALID;
+		}
+	}
+	const Industry *ind = Industry::GetByTileIfValid(tile);
+	return (ind != nullptr) ? ind->type : IT_INVALID;
+}
+
+/**
+ * Get the smallmap count for an industry type, respecting military fog snapshots if active.
+ * @param type IndustryType to count
+ * @return Number of industries of this type known to the viewer
+ */
+size_t GetSmallMapIndustryCount(IndustryType type)
+{
+	if (MilitaryFog::IsActive()) {
+		uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
+		if (side < MAX_MILITARY_SIDES) {
+			return MilitaryFog::GetIndustryTypeCount(side, type);
+		}
+	}
+	return Industry::GetIndustryTypeCount(type);
+}
+
+/**
+ * Get the 32-bit pixel colour for an industry tile in Industries smallmap view.
+ * @param tile Tile to inspect
+ * @return 32-bit smallmap pixel colour (replicated 4x for 2x2 blit), or 0 if invalid
+ */
+uint32_t GetSmallMapIndustryPixel(TileIndex tile)
+{
+	IndustryType type = GetSmallMapIndustryType(tile);
+	if (type != IT_INVALID && type < NUM_INDUSTRYTYPES) {
+		return GetIndustrySpec(type)->map_colour.p * 0x01010101;
+	}
+	return 0;
+}
+
 /** Class managing the smallmap window. */
 class SmallMapWindow : public Window {
+	friend void ShowSmallMapIndustries();
 protected:
 	/** Available kinds of zoomlevel changes. */
 	enum class ZoomLevelChange : uint8_t {
@@ -959,6 +1010,7 @@ protected:
 		for (const Vehicle *v : Vehicle::Iterate()) {
 			if (v->type == VehicleType::Effect) continue;
 			if (v->vehstatus.Any({VehState::Hidden, VehState::Unclickable})) continue;
+			if (MilitaryFog::ShouldHideVehicleForLocal(v)) continue;
 
 			/* Remap into flat coordinates. */
 			Point pt = this->RemapTile(v->x_pos / (int)TILE_SIZE, v->y_pos / (int)TILE_SIZE);
@@ -995,6 +1047,36 @@ protected:
 	 */
 	void DrawTowns(const DrawPixelInfo *dpi, const int vertical_padding) const
 	{
+		if (MilitaryFog::IsActive()) {
+			uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
+			if (side < MAX_MILITARY_SIDES) {
+				const auto &intel = MilitaryFog::GetSideIntelligence(side);
+				for (const auto &ts : intel.town_snapshots) {
+					if (!ts.exists || !IsValidTile(ts.xy)) continue;
+
+					uint16_t sign_width = ts.sign.width_small;
+					if (sign_width == 0) {
+						sign_width = static_cast<uint16_t>(GetStringBoundingBox(ts.name, FontSize::Small).width);
+					}
+
+					/* Remap the town coordinate */
+					Point pt = this->RemapTile(TileX(ts.xy), TileY(ts.xy));
+					int x = pt.x - this->subscroll - (sign_width >> 1);
+					int y = pt.y + vertical_padding;
+
+					/* Check if the town sign is within bounds */
+					if (x + sign_width > dpi->left &&
+							x < dpi->left + dpi->width &&
+							y + GetCharacterHeight(FontSize::Small) > dpi->top &&
+							y < dpi->top + dpi->height) {
+						/* And draw it. */
+						DrawString(x, x + sign_width, y, ts.name, TextColour::White, AlignmentH::Start, false, FontSize::Small);
+					}
+				}
+				return;
+			}
+		}
+
 		for (const Town *t : Town::Iterate()) {
 			/* Remap the town coordinate */
 			Point pt = this->RemapTile(TileX(t->xy), TileY(t->xy));
@@ -1020,6 +1102,50 @@ protected:
 	void DrawIndustryNames(const DrawPixelInfo *dpi, const int vertical_padding) const
 	{
 		if (this->map_type != SmallMapType::Industries) return;
+
+		if (MilitaryFog::IsActive()) {
+			uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
+			if (side < MAX_MILITARY_SIDES) {
+				const auto &intel = MilitaryFog::GetSideIntelligence(side);
+				std::vector<TileIndex> drawn_locations;
+				for (const auto &is : intel.industry_snapshots) {
+					if (!is.exists || is.location == INVALID_TILE) continue;
+					if (std::find(drawn_locations.begin(), drawn_locations.end(), is.location) != drawn_locations.end()) continue;
+					drawn_locations.push_back(is.location);
+					if (is.type >= NUM_INDUSTRYTYPES) continue;
+					uint list_pos = _industry_to_list_pos[is.type];
+					if (list_pos >= lengthof(_legend_from_industries)) continue;
+					const LegendAndColour &tbl = _legend_from_industries[list_pos];
+					if (!tbl.show_on_map) continue;
+
+					/* Industry names blink together with their blobs in the smallmap. */
+					const bool is_blinking = is.type == _smallmap_industry_highlight && !_smallmap_industry_highlight_state;
+					if (is_blinking) continue;
+
+					if (_industry_to_name_string_width[is.type] == 0) {
+						_industry_to_name_string_width[is.type] = GetStringBoundingBox(tbl.legend, FontSize::Small).width;
+					}
+					const uint16_t &legend_text_width = _industry_to_name_string_width[is.type];
+
+					/* Remap the industry coordinate */
+					const TileIndex &tile = is.location;
+					const Point pt = this->RemapTile(TileX(tile), TileY(tile));
+					const int x = pt.x - this->subscroll - (legend_text_width / 2);
+					const int y = pt.y + vertical_padding;
+
+					/* Check if the industry name is within bounds */
+					if (x + legend_text_width > dpi->left &&
+							x < dpi->left + dpi->width &&
+							y + GetCharacterHeight(FontSize::Small) > dpi->top &&
+							y < dpi->top + dpi->height) {
+
+						/* And draw it. */
+						DrawString(x, x + legend_text_width, y, tbl.legend, TextColour::White, AlignmentH::Start, false, FontSize::Small);
+					}
+				}
+				return;
+			}
+		}
 
 		for (const Industry *i : Industry::Iterate()) {
 			const LegendAndColour &tbl = _legend_from_industries[_industry_to_list_pos[i->type]];
@@ -1065,6 +1191,7 @@ protected:
 	 */
 	void DrawSmallMap(DrawPixelInfo *dpi) const
 	{
+		ActiveSnapshotScope snapshot_scope(MilitaryFog::GetLocalIntelligenceSide());
 		Blitter *blitter = BlitterFactory::GetCurrentBlitter();
 		AutoRestoreBackup dpi_backup(_cur_dpi, dpi);
 
@@ -1353,12 +1480,12 @@ protected:
 					if (this->map_type == SmallMapType::Industries) {
 						/* If industry is allowed to be seen, use its colour on the map.
 						 * This has the highest priority above any value in _tiletype_importance. */
-						IndustryType type = Industry::GetByTile(ti)->type;
-						if (_legend_from_industries[_industry_to_list_pos[type]].show_on_map) {
+						IndustryType type = GetSmallMapIndustryType(ti);
+						if (type != IT_INVALID && type < NUM_INDUSTRYTYPES && _legend_from_industries[_industry_to_list_pos[type]].show_on_map) {
 							if (type == _smallmap_industry_highlight) {
 								if (_smallmap_industry_highlight_state) return MKCOLOUR_XXXX(PC_WHITE);
 							} else {
-								return GetIndustrySpec(type)->map_colour.p * 0x01010101;
+								return GetSmallMapIndustryPixel(ti);
 							}
 						}
 						/* Otherwise make it disappear */
@@ -1669,7 +1796,10 @@ public:
 							if (tbl.show_on_map && tbl.industry_type == _smallmap_industry_highlight) {
 								legend_colour = _smallmap_industry_highlight_state ? PC_WHITE : PC_BLACK;
 							}
-							this->DrawLegend(text, icon, tbl.show_on_map, GetString(STR_SMALLMAP_INDUSTRY, tbl.legend, Industry::GetIndustryTypeCount(tbl.industry_type)));
+							{
+								size_t count = GetSmallMapIndustryCount(tbl.industry_type);
+								this->DrawLegend(text, icon, tbl.show_on_map, GetString(STR_SMALLMAP_INDUSTRY, tbl.legend, count));
+							}
 							break;
 
 						case SmallMapType::LinkStats:
@@ -2154,6 +2284,23 @@ static WindowDesc _smallmap_desc(
 void ShowSmallMap()
 {
 	AllocateWindowDescFront<SmallMapWindow>(_smallmap_desc, 0);
+}
+
+/**
+ * Show the smallmap window in Industries mode with industry names visible.
+ */
+void ShowSmallMapIndustries()
+{
+	SmallMapWindow *w = (SmallMapWindow *)FindWindowById(WindowClass::SmallMap, 0);
+	if (w == nullptr) {
+		w = AllocateWindowDescFront<SmallMapWindow>(_smallmap_desc, 0);
+	}
+	if (w != nullptr) {
+		w->SwitchMapType(SmallMapType::Industries);
+		SmallMapWindow::show_ind_names = true;
+		w->SetWidgetLoweredState(WID_SM_SHOW_IND_NAMES, true);
+		w->SetDirty();
+	}
 }
 
 /**

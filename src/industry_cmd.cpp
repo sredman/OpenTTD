@@ -13,6 +13,7 @@
 #include "bridge_map.h"
 #include "clear_map.h"
 #include "industry.h"
+#include "military_fog.h"
 #include "station_base.h"
 #include "station_func.h"
 #include "landscape.h"
@@ -330,11 +331,44 @@ static IndustryDrawTileProc * const _industry_draw_tile_procs[5] = {
 	IndustryDrawCoalPlantSparks,
 };
 
+/**
+ * Get the display colour for an industry tile, respecting military fog snapshots if active.
+ * @param tile Tile to query
+ * @return Colours enum value
+ */
+Colours GetIndustryTileColour(TileIndex tile)
+{
+	if (ActiveSnapshotScope::IsActive()) {
+		const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshotAtTile(ActiveSnapshotScope::GetCurrentSide(), tile);
+		if (is != nullptr) return is->colour;
+	} else {
+		IndustryID ind_id = GetIndustryIndex(tile);
+		if (Industry::IsValidID(ind_id)) {
+			const Industry *ind = Industry::Get(ind_id);
+			return ind->random_colour;
+		}
+	}
+	return Colours::Grey;
+}
+
+/**
+ * Get the palette ID for an industry tile based on its display colour.
+ * @param tile Tile to query
+ * @return PaletteID to use for rendering
+ */
+PaletteID GetIndustryTilePalette(TileIndex tile)
+{
+	return GetColourPalette(GetIndustryTileColour(tile));
+}
+
 /** @copydoc DrawTileProc */
 static void DrawTile_Industry(TileInfo *ti)
 {
 	IndustryGfx gfx = GetIndustryGfx(ti->tile);
-	Industry *ind = Industry::GetByTile(ti->tile);
+	IndustryID ind_id = GetIndustryIndex(ti->tile);
+	Industry *ind = (!ActiveSnapshotScope::IsActive() && Industry::IsValidID(ind_id)) ? Industry::Get(ind_id) : nullptr;
+	Colours colour = GetIndustryTileColour(ti->tile);
+
 	const IndustryTileSpec *indts = GetIndustryTileSpec(gfx);
 
 	/* Retrieve pointer to the draw industry tile struct */
@@ -343,7 +377,7 @@ static void DrawTile_Industry(TileInfo *ti)
 		 * DrawNewIndustry will return false if ever the resolver could not
 		 * find any sprite to display.  So in this case, we will jump on the
 		 * substitute gfx instead. */
-		if (indts->grf_prop.HasSpriteGroups() && DrawNewIndustryTile(ti, ind, gfx, indts)) {
+		if (ind != nullptr && indts->grf_prop.HasSpriteGroups() && DrawNewIndustryTile(ti, ind, gfx, indts)) {
 			return;
 		} else {
 			/* No sprite group (or no valid one) found, meaning no graphics associated.
@@ -370,7 +404,7 @@ static void DrawTile_Industry(TileInfo *ti)
 	if (image == SPR_FLAT_WATER_TILE && IsTileOnWater(ti->tile)) {
 		DrawWaterClassGround(ti);
 	} else {
-		DrawGroundSprite(image, GroundSpritePaletteTransform(image, dits->ground.pal, GetColourPalette(ind->random_colour)));
+		DrawGroundSprite(image, GroundSpritePaletteTransform(image, dits->ground.pal, GetColourPalette(colour)));
 	}
 
 	/* If industries are transparent and invisible, do not draw the upper part */
@@ -379,7 +413,7 @@ static void DrawTile_Industry(TileInfo *ti)
 	/* Add industry on top of the ground? */
 	image = dits->building.sprite;
 	if (image != 0) {
-		AddSortableSpriteToDraw(image, SpriteLayoutPaletteTransform(image, dits->building.pal, GetColourPalette(ind->random_colour)),
+		AddSortableSpriteToDraw(image, SpriteLayoutPaletteTransform(image, dits->building.pal, GetColourPalette(colour)),
 			*ti, *dits, IsTransparencySet(TransparencyOption::Industries));
 
 		if (IsTransparencySet(TransparencyOption::Industries)) return;
@@ -403,8 +437,12 @@ static Foundation GetFoundation_Industry(TileIndex tile, Slope tileh)
 	if (gfx >= NEW_INDUSTRYTILEOFFSET) {
 		const IndustryTileSpec *indts = GetIndustryTileSpec(gfx);
 		if (indts->callback_mask.Test(IndustryTileCallbackMask::DrawFoundations)) {
-			uint32_t callback_res = GetIndustryTileCallback(CBID_INDTILE_DRAW_FOUNDATIONS, 0, 0, gfx, Industry::GetByTile(tile), tile);
-			if (callback_res != CALLBACK_FAILED && !ConvertBooleanCallback(indts->grf_prop.grffile, CBID_INDTILE_DRAW_FOUNDATIONS, callback_res)) return Foundation::None;
+			IndustryID ind_id = GetIndustryIndex(tile);
+			Industry *ind = ActiveSnapshotScope::IsActive() ? nullptr : (Industry::IsValidID(ind_id) ? Industry::Get(ind_id) : nullptr);
+			if (ind != nullptr) {
+				uint32_t callback_res = GetIndustryTileCallback(CBID_INDTILE_DRAW_FOUNDATIONS, 0, 0, gfx, ind, tile);
+				if (callback_res != CALLBACK_FAILED && !ConvertBooleanCallback(indts->grf_prop.grffile, CBID_INDTILE_DRAW_FOUNDATIONS, callback_res)) return Foundation::None;
+			}
 		}
 	}
 	return FlatteningFoundation(tileh);
@@ -415,7 +453,8 @@ static void AddAcceptedCargo_Industry(TileIndex tile, CargoArray &acceptance, Ca
 {
 	IndustryGfx gfx = GetIndustryGfx(tile);
 	const IndustryTileSpec *itspec = GetIndustryTileSpec(gfx);
-	const Industry *ind = Industry::GetByTile(tile);
+	IndustryID ind_id = GetIndustryIndex(tile);
+	Industry *ind = ActiveSnapshotScope::IsActive() ? nullptr : (Industry::IsValidID(ind_id) ? Industry::Get(ind_id) : nullptr);
 
 	/* Starting point for acceptance */
 	auto accepts_cargo = itspec->accepts_cargo;
@@ -423,33 +462,37 @@ static void AddAcceptedCargo_Industry(TileIndex tile, CargoArray &acceptance, Ca
 
 	if (itspec->special_flags.Test(IndustryTileSpecialFlag::AcceptsAllCargo)) {
 		/* Copy all accepted cargoes from industry itself */
-		for (const auto &a : ind->accepted) {
-			auto pos = std::ranges::find(accepts_cargo, a.cargo);
-			if (pos == std::end(accepts_cargo)) {
-				/* Not found, insert */
-				pos = std::ranges::find(accepts_cargo, INVALID_CARGO);
-				if (pos == std::end(accepts_cargo)) continue; // nowhere to place, give up on this one
-				*pos = a.cargo;
+		if (ind != nullptr) {
+			for (const auto &a : ind->accepted) {
+				auto pos = std::ranges::find(accepts_cargo, a.cargo);
+				if (pos == std::end(accepts_cargo)) {
+					/* Not found, insert */
+					pos = std::ranges::find(accepts_cargo, INVALID_CARGO);
+					if (pos == std::end(accepts_cargo)) continue; // nowhere to place, give up on this one
+					*pos = a.cargo;
+				}
+				cargo_acceptance[std::distance(std::begin(accepts_cargo), pos)] += 8;
 			}
-			cargo_acceptance[std::distance(std::begin(accepts_cargo), pos)] += 8;
 		}
 	}
 
-	if (itspec->callback_mask.Test(IndustryTileCallbackMask::AcceptCargo)) {
-		/* Try callback for accepts list, if success override all existing accepts */
-		uint16_t res = GetIndustryTileCallback(CBID_INDTILE_ACCEPT_CARGO, 0, 0, gfx, Industry::GetByTile(tile), tile);
-		if (res != CALLBACK_FAILED) {
-			accepts_cargo.fill(INVALID_CARGO);
-			for (uint i = 0; i < INDUSTRY_ORIGINAL_NUM_INPUTS; i++) accepts_cargo[i] = GetCargoTranslation(GB(res, i * 5, 5), itspec->grf_prop.grffile);
+	if (gfx >= NEW_INDUSTRYTILEOFFSET && itspec->grf_prop.HasGrfFile()) {
+		if (itspec->callback_mask.Test(IndustryTileCallbackMask::AcceptCargo) && ind != nullptr) {
+			/* Try callback for accepts list, if success override all existing accepts */
+			uint16_t res = GetIndustryTileCallback(CBID_INDTILE_ACCEPT_CARGO, 0, 0, gfx, ind, tile);
+			if (res != CALLBACK_FAILED) {
+				accepts_cargo.fill(INVALID_CARGO);
+				for (uint i = 0; i < INDUSTRY_ORIGINAL_NUM_INPUTS; i++) accepts_cargo[i] = GetCargoTranslation(GB(res, i * 5, 5), itspec->grf_prop.grffile);
+			}
 		}
-	}
 
-	if (itspec->callback_mask.Test(IndustryTileCallbackMask::CargoAcceptance)) {
-		/* Try callback for acceptance list, if success override all existing acceptance */
-		uint16_t res = GetIndustryTileCallback(CBID_INDTILE_CARGO_ACCEPTANCE, 0, 0, gfx, Industry::GetByTile(tile), tile);
-		if (res != CALLBACK_FAILED) {
-			cargo_acceptance.fill(0);
-			for (uint i = 0; i < INDUSTRY_ORIGINAL_NUM_INPUTS; i++) cargo_acceptance[i] = GB(res, i * 4, 4);
+		if (itspec->callback_mask.Test(IndustryTileCallbackMask::CargoAcceptance) && ind != nullptr) {
+			/* Try callback for acceptance list, if success override all existing acceptance */
+			uint16_t res = GetIndustryTileCallback(CBID_INDTILE_CARGO_ACCEPTANCE, 0, 0, gfx, ind, tile);
+			if (res != CALLBACK_FAILED) {
+				cargo_acceptance.fill(0);
+				for (uint i = 0; i < INDUSTRY_ORIGINAL_NUM_INPUTS; i++) cargo_acceptance[i] = GB(res, i * 4, 4);
+			}
 		}
 	}
 
@@ -464,7 +507,7 @@ static void AddAcceptedCargo_Industry(TileIndex tile, CargoArray &acceptance, Ca
 		if (always_accepted.Test(cargo)) continue;
 
 		/* Test whether the industry itself accepts the cargo type */
-		if (ind->IsCargoAccepted(cargo)) continue;
+		if (ind != nullptr && ind->IsCargoAccepted(cargo)) continue;
 
 		/* If the industry itself doesn't accept this cargo, set 'always accepted' bit */
 		always_accepted.Set(cargo);
@@ -474,10 +517,25 @@ static void AddAcceptedCargo_Industry(TileIndex tile, CargoArray &acceptance, Ca
 /** @copydoc GetTileDescProc */
 static void GetTileDesc_Industry(TileIndex tile, TileDesc &td)
 {
-	const Industry *i = Industry::GetByTile(tile);
-	const IndustrySpec *is = GetIndustrySpec(i->type);
+	IndustryID ind_id = GetIndustryIndex(tile);
+	IndustryType type = 0;
+	Owner owner = OWNER_NONE;
 
-	td.owner[0] = i->owner;
+	if (ActiveSnapshotScope::IsActive()) {
+		const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshotAtTile(ActiveSnapshotScope::GetCurrentSide(), tile);
+		if (is != nullptr) {
+			type = is->type;
+			owner = is->owner;
+		}
+	} else if (Industry::IsValidID(ind_id)) {
+		const Industry *i = Industry::Get(ind_id);
+		type = i->type;
+		owner = i->owner;
+	}
+
+	const IndustrySpec *is = GetIndustrySpec(type);
+
+	td.owner[0] = owner;
 	td.str = is->name;
 	if (!IsIndustryCompleted(tile)) {
 		td.dparam = td.str.base();

@@ -47,6 +47,7 @@
 #include "group_cmd.h"
 
 #include "table/strings.h"
+#include "military_fog.h"
 
 #include "safeguards.h"
 
@@ -227,6 +228,15 @@ void BaseVehicleListWindow::BuildVehicleList()
 	this->vehgroups.clear();
 
 	GenerateVehicleSortList(&this->vehicles, this->vli);
+
+	if (MilitaryFog::IsActive()) {
+		this->vehicles.erase(
+			std::remove_if(this->vehicles.begin(), this->vehicles.end(), [](const Vehicle *v) {
+				return MilitaryFog::ShouldHideVehicleForLocal(v);
+			}),
+			this->vehicles.end()
+		);
+	}
 
 	CargoTypes used{};
 	for (const Vehicle *v : this->vehicles) {
@@ -3159,6 +3169,10 @@ public:
 	void OnPaint() override
 	{
 		const Vehicle *v = Vehicle::Get(this->window_number);
+		if (MilitaryFog::ShouldHideVehicleForLocal(v)) {
+			this->Close();
+			return;
+		}
 
 		const Window *mainwindow = GetMainWindow();
 		if (mainwindow->viewport->follow_vehicle == v->index) {
@@ -3499,6 +3513,7 @@ static WindowDesc _train_view_desc(
  */
 void ShowVehicleViewWindow(const Vehicle *v)
 {
+	if (v == nullptr || MilitaryFog::ShouldHideVehicleForLocal(v)) return;
 	AllocateWindowDescFront<VehicleViewWindow>((v->type == VehicleType::Train) ? _train_view_desc : _vehicle_view_desc, v->index);
 }
 
@@ -3547,13 +3562,14 @@ bool VehicleClicked(const GUIVehicleGroup &vehgroup)
 
 void StopGlobalFollowVehicle(const Vehicle *v)
 {
-	Window *w = GetMainWindow();
-	if (w->viewport->follow_vehicle == v->index) {
+	Window *w = FindWindowById(WindowClass::MainWindow, 0);
+	if (w != nullptr && w->viewport != nullptr && w->viewport->follow_vehicle == v->index) {
 		const Vehicle *moving_front = v->GetMovingFront();
 		ScrollMainWindowTo(moving_front->x_pos, moving_front->y_pos, moving_front->z_pos, true); // lock the main view on the vehicle's last position
 		w->viewport->CancelFollow(*w);
 	}
 }
+
 
 
 /**

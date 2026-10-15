@@ -2260,10 +2260,12 @@ static void GetTileDesc_Road(TileIndex tile, TileDesc &td)
 			break;
 		}
 
-		case RoadTileType::Depot:
+		case RoadTileType::Depot: {
 			td.str = STR_LAI_ROAD_DESCRIPTION_ROAD_VEHICLE_DEPOT;
-			td.build_date = Depot::GetByTile(tile)->build_date;
+			Depot *d = Depot::GetByTileIfValid(tile);
+			if (d != nullptr) td.build_date = d->build_date;
 			break;
+		}
 
 		default: {
 			td.str = (road_rt != INVALID_ROADTYPE ? _road_tile_strings[to_underlying(GetRoadside(tile))] : STR_LAI_ROAD_DESCRIPTION_TRAMWAY);

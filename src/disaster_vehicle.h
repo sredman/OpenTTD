@@ -62,6 +62,7 @@ struct DisasterVehicle final : public SpecializedVehicle<DisasterVehicle, Vehicl
 
 	void UpdatePosition(int x, int y, int z);
 	void UpdateDeltaXY() override;
+	void GetImage(Direction direction, EngineImageType image_type, VehicleSpriteSeq *result) const override;
 	/** Update disaster vehicle sprite and apply side recolouring palettes for military units. */
 	void UpdateImage();
 	bool Tick() override;
@@ -122,5 +123,10 @@ DisasterVehicle *FindNearestEligibleEnemyMarker(const DisasterVehicle *aircraft)
  * @return True if scenario was initialized; false if map dimensions are too small.
  */
 bool SetupMilitaryScenario();
+
+/**
+ * Reset fixed military demonstration scenario and disable military fog of war.
+ */
+void ResetMilitaryScenario();
 
 #endif /* DISASTER_VEHICLE_H */

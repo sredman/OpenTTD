@@ -40,6 +40,7 @@
 #include "widgets/misc_widget.h"
 
 #include "table/strings.h"
+#include "military_fog.h"
 
 #include "safeguards.h"
 
@@ -129,6 +130,8 @@ public:
 
 	void OnInit() override
 	{
+		ActiveSnapshotScope snapshot_scope(MilitaryFog::GetLocalIntelligenceSide());
+
 		Town *t = ClosestTownFromTile(this->tile, _settings_game.economy.dist_local_authority);
 
 		TileDesc td{};
@@ -143,6 +146,9 @@ public:
 
 		/* Tiletype */
 		this->landinfo_data.push_back(GetString(td.str, td.dparam));
+		if (MilitaryFog::IsActive() && !MilitaryFog::IsTileCurrentlyVisibleForLocal(this->tile)) {
+			this->landinfo_data.push_back("(Stale snapshot - Fog of War)");
+		}
 
 		/* Up to four owners */
 		for (uint i = 0; i < 4; i++) {

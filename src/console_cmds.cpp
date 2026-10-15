@@ -47,12 +47,22 @@
 #include "company_cmd.h"
 #include "misc_cmd.h"
 #include "disaster_vehicle.h"
+#include "town.h"
+#include "station_base.h"
+#include "station_map.h"
+#include "waypoint_base.h"
+#include "military_fog.h"
+#include "industry.h"
+#include "industry_map.h"
+#include "clear_map.h"
+#include "smallmap_gui.h"
 
 #if defined(WITH_ZLIB)
 #include "network/network_content.h"
 #endif /* WITH_ZLIB */
 
 #include "table/strings.h"
+#include "timer/timer_game_tick.h"
 
 #include "safeguards.h"
 
@@ -61,6 +71,35 @@ static uint _script_current_depth; ///< Depth of scripts running (used to abort 
 
 /* Scheduled execution handling. */
 static std::string _scheduled_monthly_script; ///< Script scheduled to execute by the 'schedule' console command (empty if no script is scheduled).
+
+/**
+ * Stored scheduled command to execute after a given number of game ticks.
+ */
+struct ScheduledTickCommand {
+	uint32_t ticks_remaining; ///< Number of game ticks remaining before execution.
+	std::string command;      ///< Console command string to execute.
+};
+/** List of scheduled tick commands awaiting execution. */
+static std::vector<ScheduledTickCommand> _scheduled_tick_commands;
+
+/** Interval timer executing scheduled tick commands every game tick. */
+static const IntervalTimer<TimerGameTick> _scheduled_tick_timer = {{TimerGameTick::Priority::None, 1}, [](auto) {
+	if (_scheduled_tick_commands.empty()) return;
+
+	std::vector<std::string> to_execute;
+	for (auto it = _scheduled_tick_commands.begin(); it != _scheduled_tick_commands.end();) {
+		if (it->ticks_remaining <= 1) {
+			to_execute.push_back(std::move(it->command));
+			it = _scheduled_tick_commands.erase(it);
+		} else {
+			it->ticks_remaining--;
+			++it;
+		}
+	}
+	for (const auto &cmd : to_execute) {
+		IConsoleCmdExec(cmd);
+	}
+}};
 
 /** Timer that runs every month of game time for the 'schedule' console command. */
 static const IntervalTimer<TimerGameCalendar> _scheduled_monthly_timer = {{TimerGameCalendar::Trigger::Month, TimerGameCalendar::Priority::None}, [](auto) {
@@ -2969,6 +3008,466 @@ static bool ConSetupMilitaryScenario([[maybe_unused]] std::span<std::string_view
 	return true;
 }
 
+/** Reset military scenario command. @copydoc IConsoleCmdProc */
+static bool ConResetMilitaryScenario([[maybe_unused]] std::span<std::string_view> argv)
+{
+	ResetMilitaryScenario();
+	IConsolePrint(CC_DEFAULT, "Military scenario reset.");
+	return true;
+}
+
+/** Relocate military aircraft command. @copydoc IConsoleCmdProc */
+static bool ConRelocateMilitaryAircraft(std::span<std::string_view> argv)
+{
+	if (argv.size() < 3) {
+		IConsolePrint(CC_HELP, "Relocate military aircraft. Usage: 'relocate_military_aircraft <tile_x> <tile_y>'.");
+		return false;
+	}
+	auto x = ParseType<int>(argv[1]);
+	auto y = ParseType<int>(argv[2]);
+	if (!x.has_value() || !y.has_value()) return false;
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(*x * TILE_SIZE, *y * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) {
+				v->Next()->UpdatePosition(*x * TILE_SIZE, *y * TILE_SIZE, 0);
+			}
+			if (MilitaryFog::IsActive()) {
+				MilitaryFog::UpdateAllVisibility();
+			}
+			IConsolePrint(CC_DEFAULT, "Military aircraft relocated.");
+			return true;
+		}
+	}
+	IConsolePrint(CC_DEFAULT, "No military aircraft found.");
+	return false;
+}
+
+/** Cached industry ID for industry fixture console commands. */
+static IndustryID _fixture_ind_id{};
+
+/** Setup industry fixture command. @copydoc IConsoleCmdProc */
+static bool ConSetupIndustryFixture([[maybe_unused]] std::span<std::string_view> argv)
+{
+	if (!SetupMilitaryScenario()) {
+		IConsolePrint(CC_DEFAULT, "Failed: map must be at least 256x256.");
+		return false;
+	}
+
+	TileIndex tile_A = TileXY(140, 100);
+	TileIndex tile_A2 = TileXY(141, 100);
+	if (Industry::CanAllocateItem()) {
+		Industry *ind = Industry::Create(tile_A);
+		if (ind != nullptr) {
+			ind->type = 0; // Coal Mine
+			ind->location = TileArea(tile_A, 2, 1);
+			ind->owner = OWNER_NONE;
+			ind->random_colour = Colours::Red;
+			ind->cached_name = "FixtureCoalMineA";
+			_fixture_ind_id = ind->index;
+			Industry::industries[ind->type].insert(ind->index);
+
+			MakeIndustry(tile_A, _fixture_ind_id, 0, 0, WaterClass::Invalid);
+			MakeIndustry(tile_A2, _fixture_ind_id, 0, 1, WaterClass::Invalid);
+			SetIndustryCompleted(tile_A);
+			SetIndustryCompleted(tile_A2);
+			SetIndustryConstructionStage(tile_A, 3);
+			SetIndustryConstructionStage(tile_A2, 3);
+		}
+	}
+
+	/* Scout tile A initially */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Open SmallMap and set to Industries mode */
+	ShowSmallMapIndustries();
+
+	/* Scroll main window to tile A */
+	ScrollMainWindowToTile(tile_A, true);
+
+	IConsolePrint(CC_DEFAULT, "Industry fixture initialized: Industry A (2-tile) scouted, SmallMap in Industries mode.");
+	return true;
+}
+
+/** Hide and delete industry A command. @copydoc IConsoleCmdProc */
+static bool ConHideAndDeleteIndustryA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft far away to (60, 60) so tile A is hidden under fog */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(60 * TILE_SIZE, 60 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(60 * TILE_SIZE, 60 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Delete Industry A from live pool and clear tiles while hidden */
+	TileIndex tile_A = TileXY(140, 100);
+	TileIndex tile_A2 = TileXY(141, 100);
+	Industry *ind = Industry::GetIfValid(_fixture_ind_id);
+	if (ind != nullptr) {
+		delete ind;
+	}
+	MakeClear(tile_A, ClearGround::Grass, 0);
+	MakeClear(tile_A2, ClearGround::Grass, 0);
+
+	/* Ensure main window stays centered on tile A */
+	ScrollMainWindowToTile(tile_A, true);
+
+	IConsolePrint(CC_DEFAULT, "Industry A deleted while hidden; A is now stale snapshot.");
+	return true;
+}
+
+/** Observe industry B command. @copydoc IConsoleCmdProc */
+static bool ConObserveIndustryB([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Create Industry B at (180, 120) reusing Industry A's ID */
+	TileIndex tile_B = TileXY(180, 120);
+	Industry *reused_ind = Industry::CreateAtIndex(_fixture_ind_id, tile_B);
+	if (reused_ind != nullptr) {
+		reused_ind->type = 2; // Sawmill
+		reused_ind->location = TileArea(tile_B, 1, 1);
+		reused_ind->owner = OWNER_NONE;
+		reused_ind->random_colour = Colours::Green;
+		reused_ind->cached_name = "FixtureSawmillB";
+		Industry::industries[reused_ind->type].insert(reused_ind->index);
+
+		MakeIndustry(tile_B, _fixture_ind_id, 2, 0, WaterClass::Invalid);
+		SetIndustryCompleted(tile_B);
+		SetIndustryConstructionStage(tile_B, 3);
+	}
+
+	/* Move aircraft to (180, 120) to observe B while A at (140, 100) remains hidden */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(180 * TILE_SIZE, 120 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(180 * TILE_SIZE, 120 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Keep main window centered on tile A */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Industry B created and observed; tile A remains hidden.");
+	return true;
+}
+
+/** Partial re-scout industry A command (observes tile A, tile A2 remains hidden). @copydoc IConsoleCmdProc */
+static bool ConPartialRescoutIndustryA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft to (135, 100) so tile (140, 100) is at radius 5, but tile (141, 100) is outside radius 5 (dist = 6) */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(135 * TILE_SIZE, 100 * TILE_SIZE, GetAircraftFlightLevel(v));
+			v->dest_tile = TileXY(100, 100);
+			v->cur_speed = 0;
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(135 * TILE_SIZE, 100 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Keep main window centered on tile A */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Tile A (140, 100) partially rescouted; tile A2 (141, 100) remains hidden.");
+	return true;
+}
+
+/** Rescout industry A command. @copydoc IConsoleCmdProc */
+static bool ConRescoutIndustryA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft back to (140, 100) to re-scout tile A */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Keep main window centered on tile A */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Tile A rescouted: removal discovered.");
+	return true;
+}
+
+/** Cached town ID for town fixture console commands. */
+static TownID _fixture_town_id{};
+
+/** Setup town fixture command. @copydoc IConsoleCmdProc */
+static bool ConSetupTownFixture([[maybe_unused]] std::span<std::string_view> argv)
+{
+	TileIndex tile_A = TileXY(140, 100);
+	if (Town::CanAllocateItem()) {
+		Town *town_a = Town::Create(tile_A);
+		if (town_a != nullptr) {
+			town_a->townnametype = SPECSTR_TOWNNAME_START;
+			town_a->name = "Verdun";
+			town_a->cache.population = 1200;
+			town_a->larger_town = false;
+			town_a->UpdateVirtCoord();
+			_fixture_town_id = town_a->index;
+		}
+	}
+
+	if (!SetupMilitaryScenario()) {
+		IConsolePrint(CC_DEFAULT, "Failed: map must be at least 256x256.");
+		return false;
+	}
+
+	/* Open SmallMap */
+	ShowSmallMap();
+
+	/* Center main window on tile A */
+	ScrollMainWindowToTile(tile_A, true);
+
+	IConsolePrint(CC_DEFAULT, "Town fixture initialized: Town A (Verdun, pop 1200) created at (140, 100), unscouted under fog.");
+	return true;
+}
+
+/** Hide and change town A command (renames Verdun -> Verdun Fortress, population 1200 -> 3500, city flag true while hidden). @copydoc IConsoleCmdProc */
+static bool ConHideAndChangeTownA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft far away to (60, 60) so tile A is hidden under fog */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(60 * TILE_SIZE, 60 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(60 * TILE_SIZE, 60 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Modify live Town A while hidden under fog */
+	Town *t = Town::GetIfValid(_fixture_town_id);
+	if (t != nullptr) {
+		t->name = "Verdun Fortress";
+		t->cache.population = 3500;
+		t->larger_town = true;
+		t->UpdateVirtCoord();
+	}
+
+	/* Center main window on tile A */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Town A modified to 'Verdun Fortress' (pop 3500, city) while hidden under fog.");
+	return true;
+}
+
+/** Rescout town A command. @copydoc IConsoleCmdProc */
+static bool ConRescoutTownA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft to tile A (140, 100) to re-scout */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Center main window on tile A */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Town A re-scouted: snapshot refreshed to 'Verdun Fortress' (pop 3500, city).");
+	return true;
+}
+
+/** Cached station and waypoint IDs for station fixture console commands. */
+static StationID _fixture_station_id{};
+static StationID _fixture_waypoint_id{};
+
+/** Setup station fixture command. @copydoc IConsoleCmdProc */
+static bool ConSetupStationFixture([[maybe_unused]] std::span<std::string_view> argv)
+{
+	TileIndex tile_A = TileXY(138, 100);
+	TileIndex tile_B = TileXY(142, 100);
+
+	MilitaryFog::SetCompanyIntelligenceSide(CompanyID{0}, 0);
+
+	if (Station::CanAllocateItem()) {
+		Station *st_a = Station::Create(tile_A);
+		if (st_a != nullptr) {
+			st_a->name = "Verdun Terminal";
+			st_a->owner = CompanyID{0};
+			st_a->facilities = {StationFacility::Train, StationFacility::BusStop, StationFacility::Dock};
+			st_a->train_station = TileArea(tile_A, 1, 1);
+			st_a->spread = TileArea(tile_A, 1, 1);
+			MakeRailStation(tile_A, CompanyID{0}, st_a->index, Axis::X, 0, RAILTYPE_BEGIN);
+			st_a->UpdateVirtCoord();
+			_fixture_station_id = st_a->index;
+		}
+	}
+
+	if (Waypoint::CanAllocateItem()) {
+		Waypoint *wp_b = Waypoint::Create(tile_B);
+		if (wp_b != nullptr) {
+			wp_b->name = "Meuse Waypoint";
+			wp_b->owner = CompanyID{0};
+			wp_b->facilities = {StationFacility::Waypoint};
+			wp_b->train_station = TileArea(tile_B, 1, 1);
+			wp_b->spread = TileArea(tile_B, 1, 1);
+			MakeRailWaypoint(tile_B, CompanyID{0}, wp_b->index, Axis::X, 0, RAILTYPE_BEGIN);
+			wp_b->UpdateVirtCoord();
+			_fixture_waypoint_id = wp_b->index;
+		}
+	}
+
+	if (!SetupMilitaryScenario()) {
+		IConsolePrint(CC_DEFAULT, "Failed: map must be at least 256x256.");
+		return false;
+	}
+
+	/* Open SmallMap */
+	ShowSmallMap();
+
+	/* Center main window between tile A and tile B */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Station fixture initialized: Station A ('Verdun Terminal') at (138, 100) and Waypoint B ('Meuse Waypoint') at (142, 100), unscouted under fog.");
+	return true;
+}
+
+/** Hide and change station A and waypoint B command. @copydoc IConsoleCmdProc */
+static bool ConHideAndChangeStationA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft far away to (60, 60) so tiles A and B are hidden under fog */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(60 * TILE_SIZE, 60 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(60 * TILE_SIZE, 60 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Modify live Station A and delete Waypoint B while hidden under fog */
+	Station *st = Station::GetIfValid(_fixture_station_id);
+	if (st != nullptr) {
+		st->name = "Verdun Fortress Central";
+		st->facilities = {StationFacility::Train, StationFacility::Airport};
+		st->UpdateVirtCoord();
+	}
+
+	Waypoint *wp = Waypoint::GetIfValid(_fixture_waypoint_id);
+	if (wp != nullptr) {
+		delete wp;
+		MakeClear(TileXY(142, 100), ClearGround::Grass, 0);
+	}
+
+	/* Center main window between tile A and tile B */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Station A modified to 'Verdun Fortress Central' and Waypoint B deleted while hidden under fog.");
+	return true;
+}
+
+/** Rescout station A and waypoint B command. @copydoc IConsoleCmdProc */
+static bool ConRescoutStationA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft to (140, 100) so tiles (138, 100) and (142, 100) are within visibility radius 5 */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Center main window between tile A and tile B */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Station A and Waypoint B re-scouted: Station A updated to 'Verdun Fortress Central', Waypoint B removed.");
+	return true;
+}
+
+/** Schedule command execution after N ticks. @copydoc IConsoleCmdProc */
+static bool ConScheduleTicks(std::span<std::string_view> argv)
+{
+	if (argv.size() < 3) {
+		IConsolePrint(CC_HELP, "Schedule a command after N ticks. Usage: 'schedule_ticks <ticks> <command>'.");
+		return false;
+	}
+	auto ticks = ParseType<uint32_t>(argv[1]);
+	if (!ticks.has_value()) return false;
+
+	std::string command;
+	for (size_t i = 2; i < argv.size(); i++) {
+		if (!command.empty()) command += ' ';
+		command += argv[i];
+	}
+	if (command.size() >= 2 && command.front() == '"' && command.back() == '"') {
+		command = command.substr(1, command.size() - 2);
+	}
+
+	_scheduled_tick_commands.push_back({*ticks, std::move(command)});
+	return true;
+}
+
+/** Follow military aircraft command. @copydoc IConsoleCmdProc */
+static bool ConFollowMilitaryAircraft([[maybe_unused]] std::span<std::string_view> argv)
+{
+	Window *w = FindWindowById(WindowClass::MainWindow, 0);
+	if (w == nullptr || w->viewport == nullptr) return false;
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			ScrollMainWindowTo(v->x_pos, v->y_pos, v->z_pos, true);
+			w->viewport->follow_vehicle = v->index;
+			IConsolePrint(CC_DEFAULT, "Following military aircraft.");
+			return true;
+		}
+	}
+	IConsolePrint(CC_DEFAULT, "No military aircraft found.");
+	return false;
+}
+
+/** Print military aircraft and marker status. @copydoc IConsoleCmdProc */
+static bool ConPrintMilitaryStatus([[maybe_unused]] std::span<std::string_view> argv)
+{
+	Window *w = FindWindowById(WindowClass::MainWindow, 0);
+	if (w != nullptr && w->viewport != nullptr) {
+		const ViewportData *vp = w->viewport.get();
+		Debug(Facility::Console, Severity::Error, "STATUS VIEWPORT: left={}, top={}, width={}, height={}, virt_left={}, virt_top={}, zoom={}, follow={}",
+			vp->left, vp->top, vp->width, vp->height, vp->virtual_left, vp->virtual_top, (int)vp->zoom, vp->follow_vehicle.base());
+	}
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			Debug(Facility::Console, Severity::Error, "STATUS AIRCRAFT: pos=({}, {}), tile=({}, {}), z={}, dest=({}, {}), dir={}, state={}, target={}",
+				v->x_pos, v->y_pos, TileX(v->tile), TileY(v->tile), v->z_pos,
+				v->dest_tile != INVALID_TILE ? (int)TileX(v->dest_tile) : -1,
+				v->dest_tile != INVALID_TILE ? (int)TileY(v->dest_tile) : -1,
+				(int)v->direction, (int)v->GetMilitaryMovementState(), v->big_ufo_destroyer_target.base());
+		} else if (v->subtype == ST_MILITARY_AIRCRAFT_SHADOW) {
+			Debug(Facility::Console, Severity::Error, "STATUS SHADOW: pos=({}, {}), tile=({}, {}), z={}, coord=({}, {}, {}, {}), sprite_count={}, sprite={}",
+				v->x_pos, v->y_pos, TileX(v->tile), TileY(v->tile), v->z_pos,
+				v->coord.left, v->coord.top, v->coord.right, v->coord.bottom,
+				v->sprite_cache.sprite_seq.count,
+				v->sprite_cache.sprite_seq.count > 0 ? v->sprite_cache.sprite_seq.seq[0].sprite : 0);
+		} else if (v->subtype == ST_MILITARY_TARGET_MARKER) {
+			Debug(Facility::Console, Severity::Error, "STATUS MARKER: side={}, pos=({}, {}), tile=({}, {}), coord=({}, {}, {}, {}), hidden={}",
+				(int)v->GetMilitarySide(), v->x_pos, v->y_pos, TileX(v->tile), TileY(v->tile),
+				v->coord.left, v->coord.top, v->coord.right, v->coord.bottom,
+				MilitaryFog::ShouldHideVehicleForLocal(v));
+		}
+	}
+	return true;
+}
+
 /** Console command registration. */
 void IConsoleStdLibRegister()
 {
@@ -2977,6 +3476,8 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("echoc",                   ConEchoC);
 	IConsole::CmdRegister("exec",                    ConExec);
 	IConsole::CmdRegister("schedule",                ConSchedule);
+	IConsole::CmdRegister("schedule_ticks",          ConScheduleTicks);
+	IConsole::CmdRegister("print_military_status",   ConPrintMilitaryStatus);
 	IConsole::CmdRegister("exit",                    ConExit);
 	IConsole::CmdRegister("part",                    ConPart);
 	IConsole::CmdRegister("help",                    ConHelp);
@@ -3113,4 +3614,18 @@ void IConsoleStdLibRegister()
 
 	IConsole::CmdRegister("dump_info",               ConDumpInfo);
 	IConsole::CmdRegister("setup_military_scenario", ConSetupMilitaryScenario);
+	IConsole::CmdRegister("reset_military_scenario", ConResetMilitaryScenario);
+	IConsole::CmdRegister("relocate_military_aircraft", ConRelocateMilitaryAircraft);
+	IConsole::CmdRegister("follow_military_aircraft", ConFollowMilitaryAircraft);
+	IConsole::CmdRegister("setup_industry_fixture",    ConSetupIndustryFixture);
+	IConsole::CmdRegister("hide_and_delete_industry_a", ConHideAndDeleteIndustryA);
+	IConsole::CmdRegister("observe_industry_b",        ConObserveIndustryB);
+	IConsole::CmdRegister("partial_rescout_industry_a", ConPartialRescoutIndustryA);
+	IConsole::CmdRegister("rescout_industry_a",        ConRescoutIndustryA);
+	IConsole::CmdRegister("setup_town_fixture",        ConSetupTownFixture);
+	IConsole::CmdRegister("hide_and_change_town_a",    ConHideAndChangeTownA);
+	IConsole::CmdRegister("rescout_town_a",            ConRescoutTownA);
+	IConsole::CmdRegister("setup_station_fixture",     ConSetupStationFixture);
+	IConsole::CmdRegister("hide_and_change_station_a", ConHideAndChangeStationA);
+	IConsole::CmdRegister("rescout_station_a",         ConRescoutStationA);
 }

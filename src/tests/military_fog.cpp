@@ -900,3 +900,103 @@ TEST_CASE("MilitaryFog - Contact count 32-bit boundary serialization")
 	/* Clean up: restore default 256x256 test environment */
 	ResetFogTestEnvironment();
 }
+
+TEST_CASE("MilitaryFog - Nearest never-scouted selection: distance and deterministic lowest-TileIndex tie breaking independent of heading")
+{
+	ResetFogTestEnvironment();
+	uint8_t side0 = 0;
+
+	/* Aircraft at pixel (1600, 1600) facing Direction::SW (+X heading) */
+	DisasterVehicle *aircraft = SpawnMilitaryAircraft(1600, 1600, Direction::SW, side0);
+	REQUIRE(aircraft != nullptr);
+
+	SideIntelligence &intel = MilitaryFog::GetSideIntelligence(side0);
+	std::fill(intel.is_scouted.begin(), intel.is_scouted.end(), 1);
+	intel.never_scouted_count = 0;
+
+	/* Part A: Nearer outside heading cone vs farther inside heading cone */
+	TileIndex tile_outside = TileXY(94, 100);  // dx = 1512 - 1600 = -88, dy = 8 -> dist = 7808 (behind aircraft)
+	TileIndex tile_inside  = TileXY(120, 100); // dx = 1928 - 1600 = 328, dy = 8 -> dist = 107648 (forward in cone)
+	intel.is_scouted[tile_outside.base()] = 0;
+	intel.is_scouted[tile_inside.base()] = 0;
+	intel.never_scouted_count = 2;
+
+	/* Selection must choose nearest by distance independent of heading */
+	CHECK(MilitaryFog::FindNearestNeverScoutedTile(aircraft) == tile_outside);
+
+	/* Heading in other directions must still return the nearest tile */
+	aircraft->direction = Direction::NE;
+	CHECK(MilitaryFog::FindNearestNeverScoutedTile(aircraft) == tile_outside);
+	aircraft->direction = Direction::SE;
+	CHECK(MilitaryFog::FindNearestNeverScoutedTile(aircraft) == tile_outside);
+	aircraft->direction = Direction::NW;
+	CHECK(MilitaryFog::FindNearestNeverScoutedTile(aircraft) == tile_outside);
+
+	/* Part B: Equal-distance tie-breaking by lowest TileIndex */
+	aircraft->x_pos = 1608;
+	aircraft->y_pos = 1608; // Center of tile (100, 100)
+
+	intel.is_scouted[tile_outside.base()] = 1;
+	intel.is_scouted[tile_inside.base()] = 1;
+	intel.never_scouted_count = 0;
+
+	TileIndex tile_tie1 = TileXY(100, 95);  // dy = -80, dist = 6400, lower TileIndex
+	TileIndex tile_tie2 = TileXY(100, 105); // dy = +80, dist = 6400, higher TileIndex
+	REQUIRE(tile_tie1 < tile_tie2);
+
+	intel.is_scouted[tile_tie1.base()] = 0;
+	intel.is_scouted[tile_tie2.base()] = 0;
+	intel.never_scouted_count = 2;
+
+	/* Facing towards tile_tie2 (+Y) must still break ties deterministically in favor of lower TileIndex */
+	aircraft->direction = Direction::SE;
+	CHECK(MilitaryFog::FindNearestNeverScoutedTile(aircraft) == tile_tie1);
+
+	aircraft->direction = Direction::NW;
+	CHECK(MilitaryFog::FindNearestNeverScoutedTile(aircraft) == tile_tie1);
+
+	aircraft->direction = Direction::SW;
+	CHECK(MilitaryFog::FindNearestNeverScoutedTile(aircraft) == tile_tie1);
+
+	ResetFogTestEnvironment();
+}
+
+TEST_CASE("MilitaryFog - Visibility loss invalidates drawn vehicle without manual redraw")
+{
+	ResetFogTestEnvironment();
+	REQUIRE(SetupMilitaryScenario());
+
+	DisasterVehicle *marker = nullptr;
+	DisasterVehicle *aircraft = nullptr;
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_TARGET_MARKER && v->GetMilitarySide() == 1 && TileX(v->tile) == 140) {
+			marker = v;
+		} else if (v->subtype == ST_MILITARY_AIRCRAFT && v->GetMilitarySide() == 0) {
+			aircraft = v;
+		}
+	}
+	REQUIRE(marker != nullptr);
+	REQUIRE(aircraft != nullptr);
+
+	/* Position aircraft directly at tile (140, 100) where enemy marker is located */
+	aircraft->x_pos = 140 * TILE_SIZE;
+	aircraft->y_pos = 100 * TILE_SIZE;
+
+	/* Run normal vehicle tick: aircraft reveals marker */
+	CallVehicleTicks();
+	CHECK(MilitaryFog::IsTileCurrentlyVisible(0, TileXY(140, 100)));
+	CHECK_FALSE(MilitaryFog::ShouldHideVehicleForLocal(marker));
+
+	/* Relocate aircraft away to (180, 120) with no manual redraw or viewport commands */
+	aircraft->x_pos = 180 * TILE_SIZE;
+	aircraft->y_pos = 120 * TILE_SIZE;
+
+	/* Next normal vehicle tick: visibility update automatically invalidates marker and tile */
+	CallVehicleTicks();
+	CHECK_FALSE(MilitaryFog::IsTileCurrentlyVisible(0, TileXY(140, 100)));
+	CHECK(MilitaryFog::GetTileFogStatus(0, TileXY(140, 100)) == FOG_PREVIOUSLY_SCOUTED);
+	CHECK(MilitaryFog::ShouldHideVehicleForLocal(marker));
+
+	ResetMilitaryScenario();
+}
+

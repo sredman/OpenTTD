@@ -3,7 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-DEMO_ENV_DIR="${REPO_DIR}/scripts/demo_env"
+DEMO_INVOCATION_ID="run_$$_${RANDOM}"
+DEMO_ENV_DIR="${REPO_DIR}/scripts/demo_env/${DEMO_INVOCATION_ID}"
 CFG_FILE="${DEMO_ENV_DIR}/demo_isolated.cfg"
 DISPLAY_NUM=":99"
 
@@ -12,7 +13,6 @@ OPENTTD_PID=""
 
 cleanup() {
   echo "Cleaning up temporary fixture files and background processes..."
-  rm -f "${REPO_DIR}/scripts/autoexec.scr" "${REPO_DIR}/scripts/game_start.scr"
   rm -rf "${DEMO_ENV_DIR}"
   if [ -n "${OPENTTD_PID}" ]; then kill "${OPENTTD_PID}" 2>/dev/null || true; fi
   if [ -n "${XVNC_PID}" ]; then kill "${XVNC_PID}" 2>/dev/null || true; fi
@@ -27,17 +27,17 @@ if ! pgrep -f "Xvnc ${DISPLAY_NUM}" >/dev/null; then
 fi
 
 echo "=== 2. Preparing isolated environment and ephemeral scripts ==="
-mkdir -p "${DEMO_ENV_DIR}"
+mkdir -p "${DEMO_ENV_DIR}/scripts"
 cp "${REPO_DIR}/build-gui/regression/regression.cfg" "${CFG_FILE}"
 
-cat << 'EOF' > "${REPO_DIR}/scripts/autoexec.scr"
+cat << 'EOF' > "${DEMO_ENV_DIR}/scripts/autoexec.scr"
 setting gui.smooth_scroll 0
 setting_newgame game_creation.map_x 8
 setting_newgame game_creation.map_y 8
 newgame
 EOF
 
-cat << 'EOF' > "${REPO_DIR}/scripts/game_start.scr"
+cat << 'EOF' > "${DEMO_ENV_DIR}/scripts/game_start.scr"
 setup_military_scenario
 scrollto instant 140 100
 zoomto 0
@@ -47,10 +47,10 @@ schedule_ticks 50 "print_military_status"
 schedule_ticks 150 "print_military_status"
 schedule_ticks 300 "print_military_status"
 schedule_ticks 450 "print_military_status"
+schedule_ticks 600 "relocate_military_aircraft 140 100"
 schedule_ticks 620 "scrollto instant 140 100"
 schedule_ticks 640 "print_military_status"
 schedule_ticks 670 "relocate_military_aircraft 180 120"
-schedule_ticks 720 "scrollto instant 140 100"
 schedule_ticks 840 "print_military_status"
 schedule_ticks 1200 "exit"
 unpause

@@ -454,28 +454,8 @@ TileIndex MilitaryFog::FindNearestNeverScoutedTile(const DisasterVehicle *aircra
 	const auto &intel = _side_intelligence[side];
 	if (intel.never_scouted_count == 0 || intel.is_scouted.empty()) return INVALID_TILE;
 
-	static constexpr DirectionIndexArray<Coord2D<int8_t>> delta_coord{{{
-		{-1, -1}, // N
-		{-1, 0}, // NE
-		{-1, 1}, // E
-		{0, 1}, // SE
-		{1, 1}, // S
-		{1, 0}, // SW
-		{1, -1}, // W
-		{0, -1}, // NW
-	}}};
-
-	Coord2D<int8_t> heading_vec{0, 0};
-	if (IsValidDirection(aircraft->direction)) {
-		heading_vec = delta_coord[aircraft->direction];
-	}
-
-	TileIndex best_forward_tile = INVALID_TILE;
-	uint64_t best_forward_dist = UINT64_MAX;
-	int64_t best_forward_align = INT64_MIN;
-
-	TileIndex best_fallback_tile = INVALID_TILE;
-	uint64_t best_fallback_dist = UINT64_MAX;
+	TileIndex best_tile = INVALID_TILE;
+	uint64_t best_dist = UINT64_MAX;
 
 	size_t size = Map::Size();
 	for (size_t t = 0; t < size; t++) {
@@ -484,40 +464,22 @@ TileIndex MilitaryFog::FindNearestNeverScoutedTile(const DisasterVehicle *aircra
 		TileIndex tile{static_cast<uint>(t)};
 		int64_t center_x = TileX(tile) * TILE_SIZE + TILE_SIZE / 2;
 		int64_t center_y = TileY(tile) * TILE_SIZE + TILE_SIZE / 2;
-		int64_t dx = center_x - (int64_t)aircraft->x_pos;
-		int64_t dy = center_y - (int64_t)aircraft->y_pos;
+		int64_t dx = (int64_t)aircraft->x_pos - center_x;
+		int64_t dy = (int64_t)aircraft->y_pos - center_y;
 		uint64_t dist = dx * dx + dy * dy;
 
-		int64_t proj = dx * heading_vec.x + dy * heading_vec.y;
-		int64_t perp = dx * heading_vec.y - dy * heading_vec.x;
-
-		/* Track best forward tile (within forward flight cone) */
-		if (proj > 0 && proj >= 2 * std::abs(perp)) {
-			uint64_t eff_dist = dist + 16 * (uint64_t)(perp * perp);
-			if (eff_dist < best_forward_dist) {
-				best_forward_dist = eff_dist;
-				best_forward_align = proj;
-				best_forward_tile = tile;
-			} else if (eff_dist == best_forward_dist && best_forward_tile != INVALID_TILE) {
-				if (proj > best_forward_align) {
-					best_forward_align = proj;
-					best_forward_tile = tile;
-				} else if (proj == best_forward_align && tile < best_forward_tile) {
-					best_forward_tile = tile;
-				}
+		if (dist < best_dist) {
+			best_dist = dist;
+			best_tile = tile;
+		} else if (dist == best_dist && best_tile != INVALID_TILE) {
+			/* Deterministic tie-breaking by lowest TileIndex */
+			if (tile < best_tile) {
+				best_tile = tile;
 			}
-		}
-
-		/* Track best fallback tile anywhere */
-		if (dist < best_fallback_dist) {
-			best_fallback_dist = dist;
-			best_fallback_tile = tile;
-		} else if (dist == best_fallback_dist && best_fallback_tile != INVALID_TILE && tile < best_fallback_tile) {
-			best_fallback_tile = tile;
 		}
 	}
 
-	return (best_forward_tile != INVALID_TILE) ? best_forward_tile : best_fallback_tile;
+	return best_tile;
 }
 
 bool MilitaryFog::CheckArrivalAndClearEmptyContact(DisasterVehicle *aircraft)

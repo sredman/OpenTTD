@@ -28,6 +28,18 @@ Point TranslateXYToTileCoord(const Viewport &vp, int x, int y, bool clamp_to_map
 Point GetTileBelowCursor();
 void UpdateViewportPosition(Window *w, uint32_t delta_ms);
 
+/**
+ * Observation hook callback for viewport dirty regions.
+ * @param left   Left edge of the invalidated dirty area.
+ * @param top    Top edge of the invalidated dirty area.
+ * @param right  Right edge of the invalidated dirty area.
+ * @param bottom Bottom edge of the invalidated dirty area.
+ */
+using ViewportDirtyHook = void (*)(int left, int top, int right, int bottom);
+
+/** Active observation hook for viewport dirty regions. */
+extern ViewportDirtyHook _viewport_dirty_hook;
+
 bool MarkAllViewportsDirty(int left, int top, int right, int bottom);
 
 bool DoZoomInOutWindow(ZoomStateChange how, Window *w);

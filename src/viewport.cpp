@@ -2093,6 +2093,8 @@ static bool MarkViewportDirty(const Viewport &vp, int left, int top, int right, 
 	return true;
 }
 
+ViewportDirtyHook _viewport_dirty_hook = nullptr;
+
 /**
  * Mark all viewports that display an area as dirty (in need of repaint).
  * @param left   Left   edge of area to repaint. (viewport coordinates, that is wrt. #ZoomLevel::Min)
@@ -2104,6 +2106,10 @@ static bool MarkViewportDirty(const Viewport &vp, int left, int top, int right, 
  */
 bool MarkAllViewportsDirty(int left, int top, int right, int bottom)
 {
+	if (_viewport_dirty_hook != nullptr) {
+		_viewport_dirty_hook(left, top, right, bottom);
+	}
+
 	bool dirty = false;
 
 	for (const Window *w : Window::Iterate()) {

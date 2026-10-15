@@ -19,6 +19,7 @@
 #include "../fileio_func.h"
 #include "../gfx_func.h"
 #include "../gfx_type.h"
+#include "../viewport_func.h"
 #include "../table/sprites.h"
 #include "../company_base.h"
 #include "../company_func.h"
@@ -982,21 +983,47 @@ TEST_CASE("MilitaryFog - Visibility loss invalidates drawn vehicle without manua
 	aircraft->x_pos = 140 * TILE_SIZE;
 	aircraft->y_pos = 100 * TILE_SIZE;
 
-	/* Run normal vehicle tick: aircraft reveals marker */
+	/* Run normal vehicle tick: aircraft reveals marker and establishes its drawn bounds */
 	CallVehicleTicks();
 	CHECK(MilitaryFog::IsTileCurrentlyVisible(0, TileXY(140, 100)));
 	CHECK_FALSE(MilitaryFog::ShouldHideVehicleForLocal(marker));
 
-	/* Relocate aircraft away to (180, 120) with no manual redraw or viewport commands */
-	aircraft->x_pos = 180 * TILE_SIZE;
-	aircraft->y_pos = 120 * TILE_SIZE;
+	/* Capture drawn vehicle bounds while visible */
+	Rect drawn_bounds = marker->coord;
+	REQUIRE(drawn_bounds.left != INVALID_COORD);
+
+	/* Relocate aircraft away to (180, 120) and update its viewport so its movement is handled */
+	aircraft->UpdatePosition(180 * TILE_SIZE, 120 * TILE_SIZE, GetAircraftFlightLevel(aircraft));
+	if (aircraft->Next() != nullptr) {
+		aircraft->Next()->UpdatePosition(180 * TILE_SIZE, 120 * TILE_SIZE, 0);
+	}
+	aircraft->UpdateViewport(true, false);
+
+	/* Install dirty viewport observation hook specifically for the normal tick */
+	static std::vector<Rect> invalidated_rects;
+	invalidated_rects.clear();
+	_viewport_dirty_hook = [](int left, int top, int right, int bottom) {
+		invalidated_rects.push_back(Rect{left, top, right, bottom});
+	};
 
 	/* Next normal vehicle tick: visibility update automatically invalidates marker and tile */
 	CallVehicleTicks();
+	_viewport_dirty_hook = nullptr;
+
 	CHECK_FALSE(MilitaryFog::IsTileCurrentlyVisible(0, TileXY(140, 100)));
 	CHECK(MilitaryFog::GetTileFogStatus(0, TileXY(140, 100)) == FOG_PREVIOUSLY_SCOUTED);
 	CHECK(MilitaryFog::ShouldHideVehicleForLocal(marker));
 
+	/* Assert that previously drawn vehicle bounds were explicitly invalidated during normal tick */
+	bool found_vehicle_invalidation = false;
+	for (const auto &r : invalidated_rects) {
+		if (r.left <= drawn_bounds.left && r.right >= drawn_bounds.right &&
+				r.top <= drawn_bounds.top && r.bottom >= drawn_bounds.bottom) {
+			found_vehicle_invalidation = true;
+			break;
+		}
+	}
+	CHECK(found_vehicle_invalidation);
+
 	ResetMilitaryScenario();
 }
-

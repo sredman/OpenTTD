@@ -123,16 +123,21 @@ static constexpr DirectionIndexArray<SpriteID> _disaster_images[] = {
 	_disaster_images_target_marker,                             ///< military target marker
 };
 
-void DisasterVehicle::UpdateImage()
+void DisasterVehicle::GetImage(Direction direction, [[maybe_unused]] EngineImageType image_type, VehicleSpriteSeq *result) const
 {
 	SpriteID img = this->image_override;
-	if (img == 0) img = _disaster_images[this->subtype][this->direction];
-	this->sprite_cache.sprite_seq.Set(img);
+	if (img == 0) img = _disaster_images[this->subtype][direction];
+	result->Set(img);
 	if (this->subtype == ST_MILITARY_AIRCRAFT || this->subtype == ST_MILITARY_TARGET_MARKER) {
 		uint8_t side = this->GetMilitarySide();
 		PaletteID pal = (side == 0) ? PALETTE_TO_BLUE : PALETTE_TO_RED;
-		this->sprite_cache.sprite_seq.seq[0].pal = pal;
+		result->seq[0].pal = pal;
 	}
+}
+
+void DisasterVehicle::UpdateImage()
+{
+	this->GetImage(this->direction, EngineImageType::OnMap, &this->sprite_cache.sprite_seq);
 }
 
 /**

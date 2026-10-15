@@ -62,6 +62,7 @@ struct DisasterVehicle final : public SpecializedVehicle<DisasterVehicle, Vehicl
 
 	void UpdatePosition(int x, int y, int z);
 	void UpdateDeltaXY() override;
+	void GetImage(Direction direction, EngineImageType image_type, VehicleSpriteSeq *result) const override;
 	/** Update disaster vehicle sprite and apply side recolouring palettes for military units. */
 	void UpdateImage();
 	bool Tick() override;

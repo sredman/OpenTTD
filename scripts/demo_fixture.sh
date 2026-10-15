@@ -42,17 +42,11 @@ setup_military_scenario
 scrollto instant 140 100
 zoomto 0
 print_military_status
-schedule_ticks 50 "follow_military_aircraft"
-schedule_ticks 50 "print_military_status"
-schedule_ticks 150 "print_military_status"
-schedule_ticks 300 "print_military_status"
-schedule_ticks 450 "print_military_status"
-schedule_ticks 600 "relocate_military_aircraft 140 100"
-schedule_ticks 620 "scrollto instant 140 100"
-schedule_ticks 640 "print_military_status"
-schedule_ticks 670 "relocate_military_aircraft 180 120"
-schedule_ticks 840 "print_military_status"
-schedule_ticks 1200 "exit"
+schedule_ticks 50 "relocate_military_aircraft 140 100"
+schedule_ticks 60 "print_military_status"
+schedule_ticks 300 "relocate_military_aircraft 180 120"
+schedule_ticks 310 "print_military_status"
+schedule_ticks 450 "exit"
 unpause
 EOF
 
@@ -63,34 +57,14 @@ env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 DISPLAY="${DISPLAY_NUM}" \
   -c "${CFG_FILE}" -r 1280x800 -G 42 -d console=5 -Q &
 OPENTTD_PID=$!
 
-echo "=== 4. Capturing continuous gameplay progression ==="
-# t0: Enemy marker at (140, 100) under never-scouted fog
-sleep 1.2
-import -display "${DISPLAY_NUM}" -window root capture_enemy_hidden.png
-echo "Captured capture_enemy_hidden.png"
-
-# t1: Aircraft in ordinary autonomous flight at tile ~116 (viewport following aircraft)
-sleep 3.5
-import -display "${DISPLAY_NUM}" -window root capture_aircraft_mov1.png
-echo "Captured capture_aircraft_mov1.png"
-
-# t2: Aircraft in ordinary autonomous flight at tile ~110 (viewport following aircraft)
+echo "=== 4. Capturing fixed-camera visible and absent progression ==="
+# t1: Aircraft present at (140, 100), tile scouted and enemy marker visibly rendered
 sleep 4.0
-import -display "${DISPLAY_NUM}" -window root capture_aircraft_mov2.png
-echo "Captured capture_aircraft_mov2.png"
-
-# t3: Aircraft in ordinary autonomous flight at tile ~105 (viewport following aircraft)
-sleep 4.0
-import -display "${DISPLAY_NUM}" -window root capture_aircraft_mov3.png
-echo "Captured capture_aircraft_mov3.png"
-
-# t4: Aircraft arrived at (140, 100), tile scouted and enemy marker currently visible
-sleep 5.0
 import -display "${DISPLAY_NUM}" -window root capture_enemy_visible.png
 echo "Captured capture_enemy_visible.png"
 
-# t5: Aircraft relocated to (180, 120); tile 140 has stale snapshot, enemy marker concealed
-sleep 6.0
+# t2: Aircraft relocated to (180, 120), tile 140 becomes stale snapshot, enemy marker absent on fixed camera
+sleep 8.0
 import -display "${DISPLAY_NUM}" -window root capture_enemy_absent.png
 echo "Captured capture_enemy_absent.png"
 

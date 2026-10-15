@@ -2666,6 +2666,10 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	Company *c2 = Company::CreateAtIndex(CompanyID{1});
 	REQUIRE(c1 != nullptr);
 	REQUIRE(c2 != nullptr);
+	c1->colour = Colours::DarkBlue;
+	_company_colours[CompanyID{0}] = Colours::DarkBlue;
+	c2->colour = Colours::Red;
+	_company_colours[CompanyID{1}] = Colours::Red;
 
 	uint8_t side0 = 0;
 	uint8_t side1 = 1;
@@ -2744,6 +2748,68 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	CHECK(init_B0->is_waypoint);
 	CHECK(init_B0->name == "Meuse Waypoint");
 
+	/* Station A colour and activity checks */
+	CHECK(init_A0->colour == Colours::DarkBlue);
+	CHECK(init_A0->IsInUse());
+	CHECK(init_A0->GetDisplayColour() == Colours::DarkBlue);
+
+	/* Waypoint B colour and activity checks: inactive waypoint with retained waypoint kind */
+	CHECK(init_B0->colour == Colours::DarkBlue);
+	CHECK(init_B0->is_waypoint);
+	CHECK(init_B0->facilities.Test(StationFacility::Waypoint));
+	CHECK_FALSE(init_B0->IsInUse());
+	CHECK(init_B0->GetDisplayColour() == Colours::Grey);
+
+	/* Direct selector checks for activity and display colour */
+	{
+		/* Active station */
+		StationSnapshot active_st{};
+		active_st.is_waypoint = false;
+		active_st.facilities = {StationFacility::Train};
+		active_st.owner = CompanyID{0};
+		active_st.colour = Colours::DarkBlue;
+		CHECK(active_st.IsInUse());
+		CHECK(active_st.GetDisplayColour() == Colours::DarkBlue);
+
+		/* Inactive station (no facilities) */
+		StationSnapshot inactive_st{};
+		inactive_st.is_waypoint = false;
+		inactive_st.facilities = {};
+		inactive_st.owner = CompanyID{0};
+		inactive_st.colour = Colours::DarkBlue;
+		CHECK_FALSE(inactive_st.IsInUse());
+		CHECK(inactive_st.GetDisplayColour() == Colours::Grey);
+
+		/* Active waypoint with transport facility */
+		StationSnapshot active_wp{};
+		active_wp.is_waypoint = true;
+		active_wp.facilities = {StationFacility::Waypoint, StationFacility::Train};
+		active_wp.owner = CompanyID{0};
+		active_wp.colour = Colours::DarkBlue;
+		CHECK(active_wp.IsInUse());
+		CHECK(active_wp.GetDisplayColour() == Colours::DarkBlue);
+
+		/* Inactive waypoint (only waypoint facility) retains waypoint kind but renders grey */
+		StationSnapshot inactive_wp{};
+		inactive_wp.is_waypoint = true;
+		inactive_wp.facilities = {StationFacility::Waypoint};
+		inactive_wp.owner = CompanyID{0};
+		inactive_wp.colour = Colours::DarkBlue;
+		CHECK(inactive_wp.is_waypoint);
+		CHECK_FALSE(inactive_wp.facilities.None());
+		CHECK_FALSE(inactive_wp.IsInUse());
+		CHECK(inactive_wp.GetDisplayColour() == Colours::Grey);
+
+		/* Ownerless active station renders grey */
+		StationSnapshot ownerless_st{};
+		ownerless_st.is_waypoint = false;
+		ownerless_st.facilities = {StationFacility::Train};
+		ownerless_st.owner = OWNER_NONE;
+		ownerless_st.colour = Colours::Grey;
+		CHECK(ownerless_st.IsInUse());
+		CHECK(ownerless_st.GetDisplayColour() == Colours::Grey);
+	}
+
 	/* String formatting: Station A has icons when !small, concise name when small */
 	std::string expected_A_main = "Verdun Rail Depot";
 	{
@@ -2764,6 +2830,10 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	CHECK(init_B0->GetViewportString(false) == init_B1->GetViewportString(false));
 
 	/* --- Hidden modifications under fog --- */
+	/* Hidden company colour modification under fog: Company 0 changes primary colour to Yellow */
+	c1->colour = Colours::Yellow;
+	_company_colours[CompanyID{0}] = Colours::Yellow;
+
 	/* 1. Side 1 discovers Station A expansion to "Verdun Terminal" with BusStop */
 	st_A->name = "Verdun Terminal";
 	st_A->facilities.Set(StationFacility::BusStop);
@@ -2783,8 +2853,13 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	REQUIRE(stale_B0 != nullptr);
 	CHECK(stale_A0->name == "Verdun Rail Depot");
 	CHECK_FALSE(stale_A0->facilities.Test(StationFacility::BusStop));
+	/* Side 0 retains old observed colour DarkBlue, NEVER live _company_colours Yellow */
+	CHECK(stale_A0->colour == Colours::DarkBlue);
+	CHECK(stale_A0->GetDisplayColour() == Colours::DarkBlue);
 	CHECK(stale_B0->exists);
 	CHECK(stale_B0->name == "Meuse Waypoint");
+	CHECK(stale_B0->colour == Colours::DarkBlue);
+	CHECK(stale_B0->GetDisplayColour() == Colours::Grey);
 
 	/* Side 1 has updated Station A, but STILL retains stale Waypoint B under fog */
 	const StationSnapshot *fresh_A1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_A);
@@ -2793,8 +2868,12 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	REQUIRE(stale_B1 != nullptr);
 	CHECK(fresh_A1->name == "Verdun Terminal");
 	CHECK(fresh_A1->facilities.Test(StationFacility::BusStop));
+	CHECK(fresh_A1->colour == Colours::Yellow);
+	CHECK(fresh_A1->GetDisplayColour() == Colours::Yellow);
 	CHECK(stale_B1->exists);
 	CHECK(stale_B1->name == "Meuse Waypoint");
+	CHECK(stale_B1->colour == Colours::DarkBlue);
+	CHECK(stale_B1->GetDisplayColour() == Colours::Grey);
 
 	/* Save state before continuation */
 	SaveLoadResult save_res = SaveOrLoad("test_station_labels_continuation.sav", SaveLoadOperation::Save, DetailedFileType::GameFile, Subdirectory::None, false);
@@ -2806,21 +2885,29 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	std::string unint_pre_mini_A0 = stale_A0->GetViewportString(true);
 	uint16_t unint_pre_w_norm_A0  = stale_A0->sign.width_normal;
 	uint16_t unint_pre_w_small_A0 = stale_A0->sign.width_small;
+	Colours unint_pre_col_A0      = stale_A0->colour;
+	Colours unint_pre_disp_A0     = stale_A0->GetDisplayColour();
 
 	std::string unint_pre_main_A1 = fresh_A1->GetViewportString(false);
 	std::string unint_pre_mini_A1 = fresh_A1->GetViewportString(true);
 	uint16_t unint_pre_w_norm_A1  = fresh_A1->sign.width_normal;
 	uint16_t unint_pre_w_small_A1 = fresh_A1->sign.width_small;
+	Colours unint_pre_col_A1      = fresh_A1->colour;
+	Colours unint_pre_disp_A1     = fresh_A1->GetDisplayColour();
 
 	std::string unint_pre_main_B0 = stale_B0->GetViewportString(false);
 	std::string unint_pre_mini_B0 = stale_B0->GetViewportString(true);
 	uint16_t unint_pre_w_norm_B0  = stale_B0->sign.width_normal;
 	uint16_t unint_pre_w_small_B0 = stale_B0->sign.width_small;
+	Colours unint_pre_col_B0      = stale_B0->colour;
+	Colours unint_pre_disp_B0     = stale_B0->GetDisplayColour();
 
 	std::string unint_pre_main_B1 = stale_B1->GetViewportString(false);
 	std::string unint_pre_mini_B1 = stale_B1->GetViewportString(true);
 	uint16_t unint_pre_w_norm_B1  = stale_B1->sign.width_normal;
 	uint16_t unint_pre_w_small_B1 = stale_B1->sign.width_small;
+	Colours unint_pre_col_B1      = stale_B1->colour;
+	Colours unint_pre_disp_B1     = stale_B1->GetDisplayColour();
 
 	/* Continuation Step 1: Side 0 scouts tile_A -> discovers "Verdun Terminal" with BusStop */
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_A);
@@ -2831,10 +2918,14 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	uint16_t unint_step1_w_norm_A0  = unint_step1_A0->sign.width_normal;
 	uint16_t unint_step1_w_small_A0 = unint_step1_A0->sign.width_small;
 	uint32_t unint_step1_h_A0       = unint_step1_A0->handle;
+	Colours unint_step1_col_A0      = unint_step1_A0->colour;
+	Colours unint_step1_disp_A0     = unint_step1_A0->GetDisplayColour();
 
 	CHECK(unint_step1_h_A0 == 1);
 	CHECK(unint_step1_mini_A0 == "Verdun Terminal");
 	CHECK(unint_step1_A0->facilities.Test(StationFacility::BusStop));
+	CHECK(unint_step1_A0->colour == Colours::Yellow);
+	CHECK(unint_step1_A0->GetDisplayColour() == Colours::Yellow);
 
 	/* Continuation Step 2: Side 0 scouts tile_B -> discovers demolition */
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_B);
@@ -2843,9 +2934,13 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	/* Unobserving side 1 retains stale Waypoint B */
 	const StationSnapshot *unint_step2_B1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
 	REQUIRE(unint_step2_B1 != nullptr);
+	Colours unint_step2_col_B1      = unint_step2_B1->colour;
+	Colours unint_step2_disp_B1     = unint_step2_B1->GetDisplayColour();
 	CHECK(unint_step2_B1->handle == 2);
 	CHECK(unint_step2_B1->exists);
 	CHECK(unint_step2_B1->name == "Meuse Waypoint");
+	CHECK(unint_step2_B1->colour == Colours::DarkBlue);
+	CHECK(unint_step2_B1->GetDisplayColour() == Colours::Grey);
 
 	/* Continuation Step 3: Station C created reusing StationID 1 at tile_C */
 	REQUIRE(Station::CanAllocateItem());
@@ -2868,18 +2963,27 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	uint16_t unint_step3_w_norm_C0  = unint_step3_C0->sign.width_normal;
 	uint16_t unint_step3_w_small_C0 = unint_step3_C0->sign.width_small;
 	uint32_t unint_step3_h_C0       = unint_step3_C0->handle;
+	Colours unint_step3_col_C0      = unint_step3_C0->colour;
+	Colours unint_step3_disp_C0     = unint_step3_C0->GetDisplayColour();
 
 	CHECK(unint_step3_h_C0 == 3);
 	CHECK(unint_step3_C0->original_id == id_B);
 	CHECK(unint_step3_mini_C0 == "Sedan Junction");
 	CHECK(unint_step3_C0->facilities.Test(StationFacility::Dock));
+	CHECK(unint_step3_C0->colour == Colours::Red);
+	CHECK(unint_step3_C0->IsInUse());
+	CHECK(unint_step3_C0->GetDisplayColour() == Colours::Red);
 
 	/* Side 1 unobserving side STILL retains stale Waypoint B and does NOT see Station C */
 	CHECK(MilitaryFog::GetStationSnapshotAtTile(side1, tile_C) == nullptr);
 	const StationSnapshot *unint_step3_B1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
 	REQUIRE(unint_step3_B1 != nullptr);
+	Colours unint_step3_col_B1      = unint_step3_B1->colour;
+	Colours unint_step3_disp_B1     = unint_step3_B1->GetDisplayColour();
 	CHECK(unint_step3_B1->handle == 2);
 	CHECK(unint_step3_B1->name == "Meuse Waypoint");
+	CHECK(unint_step3_B1->colour == Colours::DarkBlue);
+	CHECK(unint_step3_B1->GetDisplayColour() == Colours::Grey);
 
 	/* Counter progression */
 	CHECK(MilitaryFog::GetSideIntelligence(side0).next_station_handle == 4);
@@ -2917,6 +3021,16 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 
 	CHECK(MilitaryFog::GetStationSnapshotAtTile(side0, tile_dummy) == nullptr);
 	CHECK(MilitaryFog::GetStationSnapshotAtTile(side1, tile_dummy) == nullptr);
+
+	/* Verify loaded snapshots retained saved colour and did not refresh from live company state */
+	CHECK(loaded_A0->colour == unint_pre_col_A0);
+	CHECK(loaded_A0->GetDisplayColour() == unint_pre_disp_A0);
+	CHECK(loaded_A1->colour == unint_pre_col_A1);
+	CHECK(loaded_A1->GetDisplayColour() == unint_pre_disp_A1);
+	CHECK(loaded_B0->colour == unint_pre_col_B0);
+	CHECK(loaded_B0->GetDisplayColour() == unint_pre_disp_B0);
+	CHECK(loaded_B1->colour == unint_pre_col_B1);
+	CHECK(loaded_B1->GetDisplayColour() == unint_pre_disp_B1);
 
 	/* Side 0 retained stale Station A */
 	CHECK(loaded_A0->handle == 1);
@@ -2964,6 +3078,8 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	CHECK(loaded_step1_A0->sign.width_small  == unint_step1_w_small_A0);
 	CHECK(loaded_step1_A0->handle == unint_step1_h_A0);
 	CHECK(loaded_step1_A0->handle == 1);
+	CHECK(loaded_step1_A0->colour == unint_step1_col_A0);
+	CHECK(loaded_step1_A0->GetDisplayColour() == unint_step1_disp_A0);
 
 	/* Loaded continuation Step 2: Side 0 scouts tile_B -> discovers demolition */
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_B);
@@ -2979,6 +3095,8 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	CHECK(loaded_step2_B1->GetViewportString(true)  == unint_pre_mini_B1);
 	CHECK(loaded_step2_B1->sign.width_normal == unint_pre_w_norm_B1);
 	CHECK(loaded_step2_B1->sign.width_small  == unint_pre_w_small_B1);
+	CHECK(loaded_step2_B1->colour == unint_step2_col_B1);
+	CHECK(loaded_step2_B1->GetDisplayColour() == unint_step2_disp_B1);
 
 	/* Loaded continuation Step 3: Station C created reusing ID at tile_C */
 	REQUIRE(Station::CanAllocateItem());
@@ -3002,6 +3120,8 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	CHECK(loaded_step3_C0->handle == unint_step3_h_C0);
 	CHECK(loaded_step3_C0->handle == 3);
 	CHECK(loaded_step3_C0->original_id == id_B);
+	CHECK(loaded_step3_C0->colour == unint_step3_col_C0);
+	CHECK(loaded_step3_C0->GetDisplayColour() == unint_step3_disp_C0);
 
 	/* Side 1 unobserving side keeps stale knowledge and does not observe Station C */
 	CHECK(MilitaryFog::GetStationSnapshotAtTile(side1, tile_C) == nullptr);
@@ -3014,6 +3134,8 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	CHECK(loaded_step3_A1->GetViewportString(true)  == unint_pre_mini_A1);
 	CHECK(loaded_step3_A1->sign.width_normal == unint_pre_w_norm_A1);
 	CHECK(loaded_step3_A1->sign.width_small  == unint_pre_w_small_A1);
+	CHECK(loaded_step3_A1->colour == unint_pre_col_A1);
+	CHECK(loaded_step3_A1->GetDisplayColour() == unint_pre_disp_A1);
 
 	const StationSnapshot *loaded_step3_B1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
 	REQUIRE(loaded_step3_B1 != nullptr);
@@ -3024,10 +3146,24 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	CHECK(loaded_step3_B1->GetViewportString(true)  == unint_pre_mini_B1);
 	CHECK(loaded_step3_B1->sign.width_normal == unint_pre_w_norm_B1);
 	CHECK(loaded_step3_B1->sign.width_small  == unint_pre_w_small_B1);
+	CHECK(loaded_step3_B1->colour == unint_step3_col_B1);
+	CHECK(loaded_step3_B1->GetDisplayColour() == unint_step3_disp_B1);
 
 	/* Counter progression matches uninterrupted continuation */
 	CHECK(MilitaryFog::GetSideIntelligence(side0).next_station_handle == 4);
 	CHECK(MilitaryFog::GetSideIntelligence(side1).next_station_handle == 3);
+
+	/* Exercise slot reuse and hidden company colour changes: alter live colours */
+	_company_colours[CompanyID{0}] = Colours::Mauve;
+	_company_colours[CompanyID{1}] = Colours::Green;
+
+	/* Stored snapshots on both sides MUST NOT leak live colours */
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side0, tile_A)->colour == Colours::Yellow);
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side0, tile_A)->GetDisplayColour() == Colours::Yellow);
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side0, tile_C)->colour == Colours::Red);
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side0, tile_C)->GetDisplayColour() == Colours::Red);
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side1, tile_B)->colour == Colours::DarkBlue);
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side1, tile_B)->GetDisplayColour() == Colours::Grey);
 
 	/* Clean up loaded live objects */
 	MakeClear(tile_A, ClearGround::Grass, 0);

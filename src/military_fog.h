@@ -68,9 +68,28 @@ struct StationSnapshot {
 	std::string name{};                           ///< Last-observed station or waypoint name.
 	StationFacilities facilities{};               ///< Last-observed station facilities.
 	Owner owner = INVALID_OWNER;                  ///< Station owner company.
+	Colours colour = Colours::Grey;               ///< Last-observed primary company colour.
 	bool exists = false;                          ///< Whether the station existed when last observed.
 	ViewportSign sign{};                          ///< Viewport sign coordinates and dimensions.
 	std::vector<TileIndex> observed_tiles{};      ///< Observed footprint tiles belonging to this snapshot.
+
+	/**
+	 * Check whether this snapshot represents an active station or waypoint with transport facilities.
+	 * @return true if remembered transport facilities are present.
+	 */
+	inline bool IsInUse() const
+	{
+		return this->facilities.Any({StationFacility::Train, StationFacility::TruckStop, StationFacility::BusStop, StationFacility::Airport, StationFacility::Dock});
+	}
+
+	/**
+	 * Get the display sign colour for this station snapshot.
+	 * @return Observed colour if owner is valid and station is in use, Colours::Grey otherwise.
+	 */
+	inline Colours GetDisplayColour() const
+	{
+		return (this->owner == OWNER_NONE || !this->IsInUse()) ? Colours::Grey : this->colour;
+	}
 
 	/**
 	 * Recompute and update viewport sign coordinates and dimensions for this station snapshot.

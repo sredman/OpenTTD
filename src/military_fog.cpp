@@ -301,6 +301,7 @@ void MilitaryFog::Initialize()
 			ss.name = GetSafeStationName(st);
 			ss.facilities = st->facilities;
 			ss.owner = st->owner;
+			ss.colour = (st->owner == OWNER_NONE) ? Colours::Grey : _company_colours[st->owner];
 			ss.exists = true;
 
 			for (TileIndex cur_tile : st->spread) {
@@ -620,6 +621,7 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 					prev_snap->owner == st_owner) {
 				prev_snap->name = st_name;
 				prev_snap->facilities = st_facilities;
+				prev_snap->colour = (st_owner == OWNER_NONE) ? Colours::Grey : _company_colours[st_owner];
 				prev_snap->is_oilrig = is_rig;
 				if (std::find(prev_snap->observed_tiles.begin(), prev_snap->observed_tiles.end(), tile) == prev_snap->observed_tiles.end()) {
 					prev_snap->observed_tiles.push_back(tile);
@@ -663,6 +665,7 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 				}
 				snap->name = st_name;
 				snap->facilities = st_facilities;
+				snap->colour = (st_owner == OWNER_NONE) ? Colours::Grey : _company_colours[st_owner];
 				snap->is_oilrig = is_rig;
 				snap->exists = true;
 
@@ -1372,6 +1375,7 @@ void MilitaryFog::Save()
 
 				SlWriteByte(ss.owner.base());
 				SlWriteByte(ss.facilities.base());
+				SlWriteByte(to_underlying(ss.colour));
 
 				uint16_t name_len = static_cast<uint16_t>(ss.name.size());
 				SlWriteByte(GB(name_len, 8, 8));
@@ -1640,6 +1644,7 @@ void MilitaryFog::Load()
 
 				ss.owner = Owner{SlReadByte()};
 				ss.facilities = static_cast<StationFacilities>(SlReadByte());
+				ss.colour = static_cast<Colours>(SlReadByte());
 
 				uint16_t name_len = (static_cast<uint16_t>(SlReadByte()) << 8);
 				name_len |= static_cast<uint16_t>(SlReadByte());
@@ -1723,7 +1728,7 @@ struct MFOGChunkHandler : ChunkHandler {
 				for (const auto &ss : intel.station_snapshots) {
 					len += 1; // exists
 					if (ss.exists) {
-						len += 4 + 2 + 1 + 1 + 4 + 1 + 1 + 2 + ss.name.size() + 4 + ss.observed_tiles.size() * 4;
+						len += 4 + 2 + 1 + 1 + 4 + 1 + 1 + 1 + 2 + ss.name.size() + 4 + ss.observed_tiles.size() * 4;
 					}
 				}
 			}

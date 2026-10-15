@@ -1506,8 +1506,7 @@ static void ViewportAddStationSnapshotStrings(DrawPixelInfo *dpi, const std::vec
 		/* Don't draw if station is owned by another company and competitor station names are hidden. Stations owned by none are never ignored. */
 		if (!show_competitors && _local_company != ss.owner && ss.owner != OWNER_NONE) continue;
 
-		bool in_use = ss.is_waypoint || ss.facilities.Any({StationFacility::Train, StationFacility::TruckStop, StationFacility::BusStop, StationFacility::Airport, StationFacility::Dock});
-		Colours colour = (ss.owner == OWNER_NONE || !in_use) ? Colours::Grey : _company_colours[ss.owner];
+		Colours colour = ss.GetDisplayColour();
 
 		std::string *str = ViewportAddString(dpi, &ss.sign, flags, colour);
 		if (str == nullptr) continue;

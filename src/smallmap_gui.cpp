@@ -1028,8 +1028,11 @@ protected:
 			uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
 			if (side < MAX_MILITARY_SIDES) {
 				const auto &intel = MilitaryFog::GetSideIntelligence(side);
+				std::vector<TileIndex> drawn_locations;
 				for (const auto &is : intel.industry_snapshots) {
 					if (!is.exists || is.location == INVALID_TILE) continue;
+					if (std::find(drawn_locations.begin(), drawn_locations.end(), is.location) != drawn_locations.end()) continue;
+					drawn_locations.push_back(is.location);
 					if (is.type >= NUM_INDUSTRYTYPES) continue;
 					uint list_pos = _industry_to_list_pos[is.type];
 					if (list_pos >= lengthof(_legend_from_industries)) continue;

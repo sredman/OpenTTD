@@ -294,6 +294,14 @@ public:
 	 */
 	static size_t GetIndustryTypeCount(uint8_t side, IndustryType type);
 
+	/**
+	 * Get the remembered production level of an industry at root location.
+	 * @param side Side index.
+	 * @param location Root tile of the industry.
+	 * @return Remembered production level, or 0 if unknown.
+	 */
+	static uint8_t GetIndustryProduction(uint8_t side, TileIndex location);
+
 	/* Save / Load */
 
 	/**

@@ -44,7 +44,16 @@ struct TownSnapshot {
 	bool exists = false;                     ///< Whether the town existed when last observed.
 	ViewportSign sign{};                     ///< Viewport sign coordinates and dimensions.
 
+	/**
+	 * Recompute and update viewport sign coordinates and dimensions for this town snapshot.
+	 */
 	void UpdateVirtCoord();
+
+	/**
+	 * Get the viewport or minimap label string for this town snapshot.
+	 * @param small Whether to return the concise minimap label (true) or full main-map label (false).
+	 * @return Formatted label string.
+	 */
 	std::string GetViewportString(bool small) const;
 };
 

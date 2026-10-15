@@ -23,6 +23,7 @@
 #include "landscape.h"
 #include "settings_type.h"
 #include <algorithm>
+#include "core/format.hpp"
 #include "safeguards.h"
 
 /** Whether military fog of war is globally active. */

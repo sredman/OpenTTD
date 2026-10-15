@@ -13,6 +13,7 @@
 #include "../disaster_vehicle.h"
 #include "../roadveh.h"
 #include "../town.h"
+#include "../town_map.h"
 #include "../industry.h"
 #include "../industry_map.h"
 #include "../map_func.h"
@@ -2168,130 +2169,236 @@ TEST_CASE("MilitaryFog - Town snapshot save/load persistence and continuation eq
 	ResetFogTestEnvironment();
 	extern void ResetHouses();
 	ResetHouses();
+	extern void RebuildTownCaches();
 	extern void InitializeLanguagePacks();
 	InitializeLanguagePacks();
 	_settings_client.gui.population_in_label = true;
 
+	/* Verify font provider preconditions and initialize string width table */
+	FontCache *fc_norm = FontCache::Get(FontSize::Normal);
+	FontCache *fc_small = FontCache::Get(FontSize::Small);
+	REQUIRE(fc_norm != nullptr);
+	REQUIRE(fc_small != nullptr);
+	CHECK(fc_norm->GetFontName() == "mock");
+	CHECK(fc_small->GetFontName() == "mock");
+	LoadStringWidthTable();
+	extern void SetupWidgetDimensions();
+	SetupWidgetDimensions();
+
 	uint8_t side0 = 0;
 	uint8_t side1 = 1;
 	TileIndex tile_A = TileXY(55, 55);
+	TileIndex tile_dummy = TileXY(65, 65);
 	TileIndex tile_B = TileXY(85, 85);
 	TileIndex tile_C = TileXY(105, 105);
 
-	/* Initialize scenario with Town A and Town B */
+	/* Establish sparse live pool allocation:
+	 * Town A at TownID{0}, Dummy at TownID{1}, Town B at TownID{2}.
+	 */
 	REQUIRE(Town::CanAllocateItem());
 	Town *town_A = Town::Create(tile_A);
 	REQUIRE(town_A != nullptr);
+	REQUIRE(town_A->index == TownID{0});
 	town_A->name = "Verdun";
 	town_A->townnametype = SPECSTR_TOWNNAME_START;
-	town_A->cache.population = 1200;
 	town_A->larger_town = false;
+
+	REQUIRE(Town::CanAllocateItem());
+	Town *dummy = Town::Create(tile_dummy);
+	REQUIRE(dummy != nullptr);
+	REQUIRE(dummy->index == TownID{1});
+	dummy->name = "DummyTown";
+	dummy->townnametype = SPECSTR_TOWNNAME_START;
+	dummy->larger_town = false;
 
 	REQUIRE(Town::CanAllocateItem());
 	Town *town_B = Town::Create(tile_B);
 	REQUIRE(town_B != nullptr);
+	REQUIRE(town_B->index == TownID{2});
 	town_B->name = "Metz";
 	town_B->townnametype = SPECSTR_TOWNNAME_START;
-	town_B->cache.population = 800;
 	town_B->larger_town = false;
 
 	TownID id_B = town_B->index;
+	CHECK(id_B == TownID{2});
 
+	/* Place completed base-game houses on clear tiles:
+	 * HouseID 0 has population 187.
+	 * Town A gets 1 house (pop 187), Town B gets 1 house (pop 187).
+	 * Dummy gets 0 houses (pop 0).
+	 */
+	MakeHouseTile(tile_A + TileDiffXY(1, 0), town_A->index, 0, TOWN_HOUSE_COMPLETED, 0, 0, false);
+	MakeHouseTile(tile_B + TileDiffXY(1, 0), town_B->index, 0, TOWN_HOUSE_COMPLETED, 0, 0, false);
+	RebuildTownCaches();
+
+	CHECK(town_A->cache.population == 187);
+	CHECK(town_A->cache.num_houses == 1);
+	CHECK(town_B->cache.population == 187);
+	CHECK(town_B->cache.num_houses == 1);
+	CHECK(dummy->cache.population == 0);
+	CHECK(dummy->cache.num_houses == 0);
+
+	/* Initialize fog and capture initial baseline snapshots */
 	MilitaryFog::Initialize();
 
-	/* Verify both sides start with initial snapshot of A and B */
 	const TownSnapshot *snap_A0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_A);
+	const TownSnapshot *snap_D0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_dummy);
 	const TownSnapshot *snap_B0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_B);
 	const TownSnapshot *snap_A1 = MilitaryFog::GetTownSnapshotAtTile(side1, tile_A);
+
 	REQUIRE(snap_A0 != nullptr);
+	REQUIRE(snap_D0 != nullptr);
 	REQUIRE(snap_B0 != nullptr);
 	REQUIRE(snap_A1 != nullptr);
-	uint32_t handle_A0 = snap_A0->handle;
-	uint32_t handle_B0 = snap_B0->handle;
 
-	/* Create side differentiation under fog:
-	 * Live Town A is renamed to "Verdun Fortress", pop 3500, city flag true.
-	 * Side 0 has NOT scouted Town A -> Side 0 retains stale "Verdun", pop 1200.
-	 * Side 1 scouts Town A -> Side 1 refreshed to "Verdun Fortress", pop 3500, city true.
+	/* Handles are sequentially assigned: A=1, Dummy=2, B=3; next=4 */
+	CHECK(snap_A0->handle == 1);
+	CHECK(snap_A0->original_id == TownID{0});
+	CHECK(snap_D0->handle == 2);
+	CHECK(snap_D0->original_id == TownID{1});
+	CHECK(snap_B0->handle == 3);
+	CHECK(snap_B0->original_id == TownID{2});
+
+	/* Delete house-free dummy town and observe its empty tile on both sides.
+	 * This establishes a non-dense saved state with active handles 1 and 3,
+	 * while retaining a non-existing slot in town_snapshots.
+	 */
+	delete dummy;
+	RebuildTownCaches();
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_dummy);
+	MilitaryFog::RefreshStationarySnapshot(side1, tile_dummy);
+
+	CHECK(MilitaryFog::GetTownSnapshotAtTile(side0, tile_dummy) == nullptr);
+	CHECK(MilitaryFog::GetTownSnapshotAtTile(side1, tile_dummy) == nullptr);
+
+	/* Create side differentiation on Town A:
+	 * Town A grows: add second house (pop +187 = 374), rename "Verdun Fortress", set city flag.
+	 * Side 1 scouts tile A -> refreshes snapshot.
+	 * Side 0 does NOT scout tile A -> retains stale "Verdun", pop 187.
 	 */
 	town_A->name = "Verdun Fortress";
-	town_A->cache.population = 3500;
 	town_A->larger_town = true;
+	MakeHouseTile(tile_A + TileDiffXY(1, 1), town_A->index, 0, TOWN_HOUSE_COMPLETED, 0, 0, false);
+	RebuildTownCaches();
 	town_A->UpdateVirtCoord();
+
+	CHECK(town_A->cache.population == 374);
+	CHECK(town_A->cache.num_houses == 2);
 
 	MilitaryFog::RefreshStationarySnapshot(side1, tile_A);
 
-	/* Create identity case under fog:
-	 * Live Town B is deleted under fog. Neither side has scouted Tile B yet.
-	 * Both sides retain stale Town B snapshot at Tile B.
+	/* Delete live Town B under fog:
+	 * First clear its owned house tile to satisfy Town::~Town() invariant, then delete town.
+	 * Neither side scouts Tile B -> both retain stale snapshot (handle 3, original_id 2).
 	 */
+	MakeClear(tile_B + TileDiffXY(1, 0), ClearGround::Grass, 0);
+	RebuildTownCaches();
 	delete town_B;
+	RebuildTownCaches();
 
-	/* Verify side differentiation and stale identity before saving */
+	/* Verify state before saving */
 	REQUIRE(MilitaryFog::GetTownSnapshotAtTile(side0, tile_A)->name == "Verdun");
-	REQUIRE(MilitaryFog::GetTownSnapshotAtTile(side0, tile_A)->population == 1200);
+	REQUIRE(MilitaryFog::GetTownSnapshotAtTile(side0, tile_A)->population == 187);
 	REQUIRE_FALSE(MilitaryFog::GetTownSnapshotAtTile(side0, tile_A)->larger_town);
 
 	REQUIRE(MilitaryFog::GetTownSnapshotAtTile(side1, tile_A)->name == "Verdun Fortress");
-	REQUIRE(MilitaryFog::GetTownSnapshotAtTile(side1, tile_A)->population == 3500);
+	REQUIRE(MilitaryFog::GetTownSnapshotAtTile(side1, tile_A)->population == 374);
 	REQUIRE(MilitaryFog::GetTownSnapshotAtTile(side1, tile_A)->larger_town);
 
 	REQUIRE(MilitaryFog::GetTownSnapshotAtTile(side0, tile_B)->exists);
+	REQUIRE(MilitaryFog::GetTownSnapshotAtTile(side0, tile_B)->handle == 3);
+	REQUIRE(MilitaryFog::GetTownSnapshotAtTile(side0, tile_B)->original_id == TownID{2});
 	REQUIRE(MilitaryFog::GetTownSnapshotAtTile(side0, tile_B)->name == "Metz");
 
-	/* Save state */
+	/* Save game state */
 	SaveLoadResult save_res = SaveOrLoad("test_town_labels_continuation.sav", SaveLoadOperation::Save, DetailedFileType::GameFile, Subdirectory::None, false);
 	REQUIRE(save_res == SaveLoadResult::Ok);
 
 	/* --- PATH 1: Uninterrupted continuation --- */
-	/* Consumer values before continuation on uninterrupted branch */
-	std::string unint_pre_main_A0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_A)->GetViewportString(false);
-	std::string unint_pre_mini_A0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_A)->GetViewportString(true);
-	std::string unint_pre_main_A1 = MilitaryFog::GetTownSnapshotAtTile(side1, tile_A)->GetViewportString(false);
-	std::string unint_pre_mini_A1 = MilitaryFog::GetTownSnapshotAtTile(side1, tile_A)->GetViewportString(true);
-	std::string unint_pre_main_B0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_B)->GetViewportString(false);
-	std::string unint_pre_mini_B0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_B)->GetViewportString(true);
+	/* Store scalar geometry and consumer strings prior to continuation */
+	const TownSnapshot *unint_snap_A0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_A);
+	const TownSnapshot *unint_snap_A1 = MilitaryFog::GetTownSnapshotAtTile(side1, tile_A);
+	const TownSnapshot *unint_snap_B0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_B);
+	REQUIRE(unint_snap_A0 != nullptr);
+	REQUIRE(unint_snap_A1 != nullptr);
+	REQUIRE(unint_snap_B0 != nullptr);
 
-	CHECK(unint_pre_main_A0 == "Verdun (1,200)");
+	std::string unint_pre_main_A0   = unint_snap_A0->GetViewportString(false);
+	std::string unint_pre_mini_A0   = unint_snap_A0->GetViewportString(true);
+	uint16_t unint_pre_w_norm_A0    = unint_snap_A0->sign.width_normal;
+	uint16_t unint_pre_w_small_A0   = unint_snap_A0->sign.width_small;
+
+	std::string unint_pre_main_A1   = unint_snap_A1->GetViewportString(false);
+	std::string unint_pre_mini_A1   = unint_snap_A1->GetViewportString(true);
+	uint16_t unint_pre_w_norm_A1    = unint_snap_A1->sign.width_normal;
+	uint16_t unint_pre_w_small_A1   = unint_snap_A1->sign.width_small;
+
+	std::string unint_pre_main_B0   = unint_snap_B0->GetViewportString(false);
+	std::string unint_pre_mini_B0   = unint_snap_B0->GetViewportString(true);
+	uint16_t unint_pre_w_norm_B0    = unint_snap_B0->sign.width_normal;
+	uint16_t unint_pre_w_small_B0   = unint_snap_B0->sign.width_small;
+
+	CHECK(unint_pre_main_A0 == "Verdun (187)");
 	CHECK(unint_pre_mini_A0 == "Verdun");
 	CHECK(unint_pre_mini_A1 == "Verdun Fortress");
+	CHECK(unint_pre_main_B0 == "Metz (187)");
 	CHECK(unint_pre_mini_B0 == "Metz");
 
-	/* Continuation Step 1: Side 0 scouts Tile A -> discovers "Verdun Fortress", pop 3500, city flag true */
+	/* Continuation Step 1: Side 0 scouts Tile A -> discovers "Verdun Fortress", pop 374, larger_town true */
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_A);
 	const TownSnapshot *unint_step1_A0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_A);
 	REQUIRE(unint_step1_A0 != nullptr);
-	std::string unint_step1_main_A0 = unint_step1_A0->GetViewportString(false);
-	std::string unint_step1_mini_A0 = unint_step1_A0->GetViewportString(true);
-	bool unint_step1_larger_A0 = unint_step1_A0->larger_town;
+	std::string unint_step1_main_A0    = unint_step1_A0->GetViewportString(false);
+	std::string unint_step1_mini_A0    = unint_step1_A0->GetViewportString(true);
+	uint16_t unint_step1_w_norm_A0     = unint_step1_A0->sign.width_normal;
+	uint16_t unint_step1_w_small_A0    = unint_step1_A0->sign.width_small;
+	uint32_t unint_step1_handle_A0     = unint_step1_A0->handle;
+	bool unint_step1_larger_A0         = unint_step1_A0->larger_town;
+
+	CHECK(unint_step1_handle_A0 == 1);
 	CHECK(unint_step1_mini_A0 == "Verdun Fortress");
 	CHECK(unint_step1_larger_A0);
 
-	/* Continuation Step 2: Side 0 scouts Tile B -> discovers deletion of Town B */
+	/* Continuation Step 2: Side 0 scouts Tile B -> discovers deletion */
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_B);
 	CHECK(MilitaryFog::GetTownSnapshotAtTile(side0, tile_B) == nullptr);
 
-	/* Continuation Step 3: Town C created reusing Town B's ID at Tile C, Side 0 scouts Tile C */
+	/* Continuation Step 3: Town C created reusing Town B's ID at Tile C with a house */
 	REQUIRE(Town::CanAllocateItem());
 	Town *town_C = Town::CreateAtIndex(id_B, tile_C);
 	REQUIRE(town_C != nullptr);
 	town_C->name = "Nancy";
 	town_C->townnametype = SPECSTR_TOWNNAME_START;
-	town_C->cache.population = 5600;
 	town_C->larger_town = false;
+	MakeHouseTile(tile_C + TileDiffXY(1, 0), town_C->index, 0, TOWN_HOUSE_COMPLETED, 0, 0, false);
+	RebuildTownCaches();
 	town_C->UpdateVirtCoord();
 
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_C);
 	const TownSnapshot *unint_step3_C0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_C);
 	REQUIRE(unint_step3_C0 != nullptr);
-	std::string unint_step3_main_C0 = unint_step3_C0->GetViewportString(false);
-	std::string unint_step3_mini_C0 = unint_step3_C0->GetViewportString(true);
-	uint32_t unint_step3_handle_C0 = unint_step3_C0->handle;
-	CHECK(unint_step3_main_C0 == "Nancy (5,600)");
-	CHECK(unint_step3_mini_C0 == "Nancy");
+	std::string unint_step3_main_C0    = unint_step3_C0->GetViewportString(false);
+	std::string unint_step3_mini_C0    = unint_step3_C0->GetViewportString(true);
+	uint16_t unint_step3_w_norm_C0     = unint_step3_C0->sign.width_normal;
+	uint16_t unint_step3_w_small_C0    = unint_step3_C0->sign.width_small;
+	uint32_t unint_step3_handle_C0     = unint_step3_C0->handle;
 
-	/* Clean up live objects on uninterrupted branch */
+	CHECK(unint_step3_main_C0 == "Nancy (187)");
+	CHECK(unint_step3_mini_C0 == "Nancy");
+	CHECK(unint_step3_handle_C0 == 4);
+	CHECK(unint_step3_C0->original_id == TownID{2});
+
+	/* Side 1 unobserving side keeps stale knowledge */
+	CHECK(MilitaryFog::GetTownSnapshotAtTile(side1, tile_C) == nullptr);
+
+	/* Clean up uninterrupted live objects */
+	MakeClear(tile_A + TileDiffXY(1, 0), ClearGround::Grass, 0);
+	MakeClear(tile_A + TileDiffXY(1, 1), ClearGround::Grass, 0);
+	RebuildTownCaches();
 	delete town_A;
+
+	MakeClear(tile_C + TileDiffXY(1, 0), ClearGround::Grass, 0);
+	RebuildTownCaches();
 	delete town_C;
 
 	/* --- PATH 2: Loaded continuation --- */
@@ -2304,7 +2411,13 @@ TEST_CASE("MilitaryFog - Town snapshot save/load persistence and continuation eq
 
 	REQUIRE(MilitaryFog::IsActive());
 
-	/* Immediately after load: check stale values, side isolation, and consumer data */
+	/* Assert font provider preconditions post-load */
+	REQUIRE(FontCache::Get(FontSize::Normal) != nullptr);
+	REQUIRE(FontCache::Get(FontSize::Small) != nullptr);
+	CHECK(FontCache::Get(FontSize::Normal)->GetFontName() == "mock");
+	CHECK(FontCache::Get(FontSize::Small)->GetFontName() == "mock");
+
+	/* Immediately after load: check stale values, side isolation, non-dense handles, and derived geometry */
 	const TownSnapshot *loaded_A0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_A);
 	const TownSnapshot *loaded_B0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_B);
 	const TownSnapshot *loaded_A1 = MilitaryFog::GetTownSnapshotAtTile(side1, tile_A);
@@ -2312,30 +2425,43 @@ TEST_CASE("MilitaryFog - Town snapshot save/load persistence and continuation eq
 	REQUIRE(loaded_B0 != nullptr);
 	REQUIRE(loaded_A1 != nullptr);
 
-	/* Side 0 retained stale values */
-	CHECK(loaded_A0->handle == handle_A0);
+	CHECK(MilitaryFog::GetTownSnapshotAtTile(side0, tile_dummy) == nullptr);
+	CHECK(MilitaryFog::GetTownSnapshotAtTile(side1, tile_dummy) == nullptr);
+
+	/* Side 0 retained stale values with non-dense handles 1 and 3 */
+	CHECK(loaded_A0->handle == 1);
 	CHECK(loaded_A0->original_id == TownID{0});
 	CHECK(loaded_A0->name == "Verdun");
-	CHECK(loaded_A0->population == 1200);
+	CHECK(loaded_A0->population == 187);
 	CHECK_FALSE(loaded_A0->larger_town);
 	CHECK(loaded_A0->GetViewportString(false) == unint_pre_main_A0);
-	CHECK(loaded_A0->GetViewportString(true) == unint_pre_mini_A0);
+	CHECK(loaded_A0->GetViewportString(true)  == unint_pre_mini_A0);
+	CHECK(loaded_A0->sign.width_normal == unint_pre_w_norm_A0);
+	CHECK(loaded_A0->sign.width_small  == unint_pre_w_small_A0);
 
 	/* Side 1 retained refreshed values */
+	CHECK(loaded_A1->handle == 1);
+	CHECK(loaded_A1->original_id == TownID{0});
 	CHECK(loaded_A1->name == "Verdun Fortress");
-	CHECK(loaded_A1->population == 3500);
+	CHECK(loaded_A1->population == 374);
 	CHECK(loaded_A1->larger_town);
 	CHECK(loaded_A1->GetViewportString(false) == unint_pre_main_A1);
-	CHECK(loaded_A1->GetViewportString(true) == unint_pre_mini_A1);
+	CHECK(loaded_A1->GetViewportString(true)  == unint_pre_mini_A1);
+	CHECK(loaded_A1->sign.width_normal == unint_pre_w_norm_A1);
+	CHECK(loaded_A1->sign.width_small  == unint_pre_w_small_A1);
 
 	/* Stale Town B retained by Side 0 */
-	CHECK(loaded_B0->handle == handle_B0);
+	CHECK(loaded_B0->handle == 3);
 	CHECK(loaded_B0->original_id == id_B);
+	CHECK(loaded_B0->original_id == TownID{2});
 	CHECK(loaded_B0->name == "Metz");
-	CHECK(loaded_B0->population == 800);
+	CHECK(loaded_B0->population == 187);
 	CHECK(loaded_B0->GetViewportString(false) == unint_pre_main_B0);
-	CHECK(loaded_B0->GetViewportString(true) == unint_pre_mini_B0);
+	CHECK(loaded_B0->GetViewportString(true)  == unint_pre_mini_B0);
+	CHECK(loaded_B0->sign.width_normal == unint_pre_w_norm_B0);
+	CHECK(loaded_B0->sign.width_small  == unint_pre_w_small_B0);
 
+	/* Loaded continuation Step 1: Side 0 scouts Tile A (no loaded-only repair) */
 	Town *loaded_town_A = nullptr;
 	for (Town *t : Town::Iterate()) {
 		if (t->xy == tile_A) {
@@ -2344,42 +2470,57 @@ TEST_CASE("MilitaryFog - Town snapshot save/load persistence and continuation eq
 		}
 	}
 	REQUIRE(loaded_town_A != nullptr);
-	loaded_town_A->cache.population = 3500;
+	CHECK(loaded_town_A->cache.population == 374);
+
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_A);
 	const TownSnapshot *loaded_step1_A0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_A);
 	REQUIRE(loaded_step1_A0 != nullptr);
 	CHECK(loaded_step1_A0->GetViewportString(false) == unint_step1_main_A0);
-	CHECK(loaded_step1_A0->GetViewportString(true) == unint_step1_mini_A0);
-	CHECK(loaded_step1_A0->sign.width_normal == loaded_A1->sign.width_normal);
-	CHECK(loaded_step1_A0->sign.width_small == loaded_A1->sign.width_small);
-	CHECK(loaded_step1_A0->sign.width_normal > 0);
-	CHECK(loaded_step1_A0->sign.width_small > 0);
+	CHECK(loaded_step1_A0->GetViewportString(true)  == unint_step1_mini_A0);
+	CHECK(loaded_step1_A0->sign.width_normal == unint_step1_w_norm_A0);
+	CHECK(loaded_step1_A0->sign.width_small  == unint_step1_w_small_A0);
+	CHECK(loaded_step1_A0->handle == unint_step1_handle_A0);
+	CHECK(loaded_step1_A0->handle == 1);
 	CHECK(loaded_step1_A0->larger_town == unint_step1_larger_A0);
 
 	/* Loaded continuation Step 2: Side 0 scouts Tile B -> discovers deletion */
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_B);
 	CHECK(MilitaryFog::GetTownSnapshotAtTile(side0, tile_B) == nullptr);
 
-	/* Loaded continuation Step 3: Town C created reusing Town B's ID at Tile C, Side 0 scouts Tile C */
+	/* Loaded continuation Step 3: Town C created reusing Town B's ID at Tile C with a house */
 	REQUIRE(Town::CanAllocateItem());
 	Town *loaded_town_C = Town::CreateAtIndex(id_B, tile_C);
 	REQUIRE(loaded_town_C != nullptr);
 	loaded_town_C->name = "Nancy";
 	loaded_town_C->townnametype = SPECSTR_TOWNNAME_START;
-	loaded_town_C->cache.population = 5600;
 	loaded_town_C->larger_town = false;
+	MakeHouseTile(tile_C + TileDiffXY(1, 0), loaded_town_C->index, 0, TOWN_HOUSE_COMPLETED, 0, 0, false);
+	RebuildTownCaches();
 	loaded_town_C->UpdateVirtCoord();
 
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_C);
 	const TownSnapshot *loaded_step3_C0 = MilitaryFog::GetTownSnapshotAtTile(side0, tile_C);
 	REQUIRE(loaded_step3_C0 != nullptr);
 	CHECK(loaded_step3_C0->GetViewportString(false) == unint_step3_main_C0);
-	CHECK(loaded_step3_C0->GetViewportString(true) == unint_step3_mini_C0);
+	CHECK(loaded_step3_C0->GetViewportString(true)  == unint_step3_mini_C0);
+	CHECK(loaded_step3_C0->sign.width_normal == unint_step3_w_norm_C0);
+	CHECK(loaded_step3_C0->sign.width_small  == unint_step3_w_small_C0);
 	CHECK(loaded_step3_C0->handle == unint_step3_handle_C0);
+	CHECK(loaded_step3_C0->handle == 4);
+	CHECK(loaded_step3_C0->original_id == TownID{2});
+
+	/* Side 1 unobserving side keeps stale knowledge */
+	CHECK(MilitaryFog::GetTownSnapshotAtTile(side1, tile_C) == nullptr);
 
 	/* Clean up loaded live objects */
-	for (Town *t : Town::Iterate()) {
-		delete t;
-	}
+	MakeClear(tile_A + TileDiffXY(1, 0), ClearGround::Grass, 0);
+	MakeClear(tile_A + TileDiffXY(1, 1), ClearGround::Grass, 0);
+	RebuildTownCaches();
+	delete loaded_town_A;
+
+	MakeClear(tile_C + TileDiffXY(1, 0), ClearGround::Grass, 0);
+	RebuildTownCaches();
+	delete loaded_town_C;
+
 	ResetFogTestEnvironment();
 }

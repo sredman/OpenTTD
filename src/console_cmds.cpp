@@ -47,6 +47,7 @@
 #include "company_cmd.h"
 #include "misc_cmd.h"
 #include "disaster_vehicle.h"
+#include "town.h"
 #include "military_fog.h"
 #include "industry.h"
 #include "industry_map.h"
@@ -3200,6 +3201,89 @@ static bool ConRescoutIndustryA([[maybe_unused]] std::span<std::string_view> arg
 	return true;
 }
 
+/** Cached town ID for town fixture console commands. */
+static TownID _fixture_town_id{};
+
+/** Setup town fixture command. @copydoc IConsoleCmdProc */
+static bool ConSetupTownFixture([[maybe_unused]] std::span<std::string_view> argv)
+{
+	TileIndex tile_A = TileXY(140, 100);
+	if (Town::CanAllocateItem()) {
+		Town *town_a = Town::Create(tile_A);
+		if (town_a != nullptr) {
+			town_a->townnametype = SPECSTR_TOWNNAME_START;
+			town_a->name = "Verdun";
+			town_a->cache.population = 1200;
+			town_a->larger_town = false;
+			town_a->UpdateVirtCoord();
+			_fixture_town_id = town_a->index;
+		}
+	}
+
+	if (!SetupMilitaryScenario()) {
+		IConsolePrint(CC_DEFAULT, "Failed: map must be at least 256x256.");
+		return false;
+	}
+
+	/* Open SmallMap */
+	ShowSmallMap();
+
+	/* Center main window on tile A */
+	ScrollMainWindowToTile(tile_A, true);
+
+	IConsolePrint(CC_DEFAULT, "Town fixture initialized: Town A (Verdun, pop 1200) created at (140, 100), unscouted under fog.");
+	return true;
+}
+
+/** Hide and change town A command (renames Verdun -> Verdun Fortress, population 1200 -> 3500, city flag true while hidden). @copydoc IConsoleCmdProc */
+static bool ConHideAndChangeTownA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft far away to (60, 60) so tile A is hidden under fog */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(60 * TILE_SIZE, 60 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(60 * TILE_SIZE, 60 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Modify live Town A while hidden under fog */
+	Town *t = Town::GetIfValid(_fixture_town_id);
+	if (t != nullptr) {
+		t->name = "Verdun Fortress";
+		t->cache.population = 3500;
+		t->larger_town = true;
+		t->UpdateVirtCoord();
+	}
+
+	/* Center main window on tile A */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Town A modified to 'Verdun Fortress' (pop 3500, city) while hidden under fog.");
+	return true;
+}
+
+/** Rescout town A command. @copydoc IConsoleCmdProc */
+static bool ConRescoutTownA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft to tile A (140, 100) to re-scout */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Center main window on tile A */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Town A re-scouted: snapshot refreshed to 'Verdun Fortress' (pop 3500, city).");
+	return true;
+}
+
 /** Schedule command execution after N ticks. @copydoc IConsoleCmdProc */
 static bool ConScheduleTicks(std::span<std::string_view> argv)
 {
@@ -3426,4 +3510,7 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("observe_industry_b",        ConObserveIndustryB);
 	IConsole::CmdRegister("partial_rescout_industry_a", ConPartialRescoutIndustryA);
 	IConsole::CmdRegister("rescout_industry_a",        ConRescoutIndustryA);
+	IConsole::CmdRegister("setup_town_fixture",        ConSetupTownFixture);
+	IConsole::CmdRegister("hide_and_change_town_a",    ConHideAndChangeTownA);
+	IConsole::CmdRegister("rescout_town_a",            ConRescoutTownA);
 }

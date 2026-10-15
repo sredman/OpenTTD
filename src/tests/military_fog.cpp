@@ -1981,3 +1981,272 @@ TEST_CASE("MilitaryFog - Full stationary snapshot persistence across save/load w
 
 	ResetFogTestEnvironment();
 }
+
+TEST_CASE("MilitaryFog - Town main-map and minimap labels from side intelligence with hidden changes and rescout")
+{
+	ResetFogTestEnvironment();
+	_settings_client.gui.population_in_label = true;
+
+	uint8_t side0 = 0;
+	uint8_t side1 = 1;
+
+	/* Create starting town */
+	TileIndex town_tile = TileXY(70, 70);
+	REQUIRE(Town::CanAllocateItem());
+	Town *town = Town::Create(town_tile);
+	REQUIRE(town != nullptr);
+	town->name = "Verdun";
+	town->townnametype = SPECSTR_TOWNNAME_START;
+	town->cache.population = 2500;
+	town->cache.num_houses = 70;
+	town->larger_town = false;
+
+	/* Initialize fog: creates initial knowledge snapshots of starting towns */
+	MilitaryFog::Initialize();
+
+	/* 1. Initial snapshot availability without marking tiles explored */
+	CHECK_FALSE(MilitaryFog::IsTileScouted(side0, town_tile));
+	CHECK_FALSE(MilitaryFog::IsTileScouted(side1, town_tile));
+
+	const TownSnapshot *ts0_init = MilitaryFog::GetTownSnapshotAtTile(side0, town_tile);
+	REQUIRE(ts0_init != nullptr);
+	CHECK(ts0_init->exists);
+	CHECK(ts0_init->name == "Verdun");
+	CHECK(ts0_init->population == 2500);
+	CHECK(ts0_init->num_houses == 70);
+	CHECK_FALSE(ts0_init->larger_town);
+	CHECK(ts0_init->sign.width_normal > 0);
+	CHECK(ts0_init->sign.width_small > 0);
+
+	/* Check viewport and smallmap string retrieval */
+	CHECK(ts0_init->GetViewportString(true) == "Verdun");
+	CHECK(ts0_init->GetViewportString(false).find("Verdun") != std::string::npos);
+	CHECK((ts0_init->GetViewportString(false).find("2,500") != std::string::npos || ts0_init->GetViewportString(false).find("2500") != std::string::npos));
+
+	/* Under ActiveSnapshotScope, side 0 and side 1 see initial snapshot data */
+	{
+		ActiveSnapshotScope scope(side0);
+		const TownSnapshot *ts_scope = MilitaryFog::GetTownSnapshotAtTile(side0, town_tile);
+		REQUIRE(ts_scope != nullptr);
+		CHECK(ts_scope->name == "Verdun");
+		CHECK(ts_scope->population == 2500);
+	}
+
+	/* 2. Hidden town changes under fog (population growth, city status, rename) */
+	town->name = "Verdun Fortress";
+	town->cache.population = 8900;
+	town->cache.num_houses = 210;
+	town->larger_town = true;
+
+	/* Unscouted side 0 retains stale initial snapshot */
+	const TownSnapshot *ts0_stale = MilitaryFog::GetTownSnapshotAtTile(side0, town_tile);
+	REQUIRE(ts0_stale != nullptr);
+	CHECK(ts0_stale->name == "Verdun");
+	CHECK(ts0_stale->population == 2500);
+	CHECK(ts0_stale->num_houses == 70);
+	CHECK_FALSE(ts0_stale->larger_town);
+	CHECK(ts0_stale->GetViewportString(true) == "Verdun");
+	CHECK((ts0_stale->GetViewportString(false).find("2,500") != std::string::npos || ts0_stale->GetViewportString(false).find("2500") != std::string::npos));
+	CHECK(ts0_stale->GetViewportString(false).find("8900") == std::string::npos);
+	CHECK(ts0_stale->GetViewportString(false).find("8,900") == std::string::npos);
+
+	/* Spectator / non-fog observer sees live town data */
+	{
+		ActiveSnapshotScope spectator_scope(MAX_MILITARY_SIDES);
+		CHECK(town->name == "Verdun Fortress");
+		CHECK(town->cache.population == 8900);
+		CHECK(town->larger_town);
+	}
+
+	/* 3. Side isolation: side 1 scouts the town while side 0 remains hidden */
+	MilitaryFog::RefreshStationarySnapshot(side1, town_tile);
+
+	const TownSnapshot *ts1_scouted = MilitaryFog::GetTownSnapshotAtTile(side1, town_tile);
+	REQUIRE(ts1_scouted != nullptr);
+	CHECK(ts1_scouted->name == "Verdun Fortress");
+	CHECK(ts1_scouted->population == 8900);
+	CHECK(ts1_scouted->num_houses == 210);
+	CHECK(ts1_scouted->larger_town);
+	CHECK(ts1_scouted->GetViewportString(true) == "Verdun Fortress");
+	CHECK((ts1_scouted->GetViewportString(false).find("8,900") != std::string::npos || ts1_scouted->GetViewportString(false).find("8900") != std::string::npos));
+
+	/* Side 0 snapshot remains strictly isolated and unchanged */
+	const TownSnapshot *ts0_still_stale = MilitaryFog::GetTownSnapshotAtTile(side0, town_tile);
+	REQUIRE(ts0_still_stale != nullptr);
+	CHECK(ts0_still_stale->name == "Verdun");
+	CHECK(ts0_still_stale->population == 2500);
+	CHECK_FALSE(ts0_still_stale->larger_town);
+
+	/* 4. Side 0 rescouts the town via aircraft */
+	DisasterVehicle *scout0 = SpawnMilitaryAircraft(70 * TILE_SIZE, 70 * TILE_SIZE, Direction::E, side0);
+	REQUIRE(scout0 != nullptr);
+	scout0->Tick();
+
+	const TownSnapshot *ts0_rescouted = MilitaryFog::GetTownSnapshotAtTile(side0, town_tile);
+	REQUIRE(ts0_rescouted != nullptr);
+	CHECK(ts0_rescouted->name == "Verdun Fortress");
+	CHECK(ts0_rescouted->population == 8900);
+	CHECK(ts0_rescouted->num_houses == 210);
+	CHECK(ts0_rescouted->larger_town);
+	CHECK(ts0_rescouted->GetViewportString(true) == "Verdun Fortress");
+	CHECK((ts0_rescouted->GetViewportString(false).find("8,900") != std::string::npos || ts0_rescouted->GetViewportString(false).find("8900") != std::string::npos));
+
+	delete town;
+	ResetFogTestEnvironment();
+}
+
+TEST_CASE("MilitaryFog - Decoupled town identity across hidden deletion and TownID pool reuse")
+{
+	ResetFogTestEnvironment();
+
+	uint8_t side0 = 0;
+
+	/* Create initial town A */
+	TileIndex tile_A = TileXY(40, 40);
+	REQUIRE(Town::CanAllocateItem());
+	Town *town_A = Town::Create(tile_A);
+	REQUIRE(town_A != nullptr);
+	town_A->name = "Metz";
+	town_A->cache.population = 3000;
+	TownID id_A = town_A->index;
+
+	MilitaryFog::Initialize();
+
+	const TownSnapshot *ts_A_init = MilitaryFog::GetTownSnapshotAtTile(side0, tile_A);
+	REQUIRE(ts_A_init != nullptr);
+	CHECK(ts_A_init->name == "Metz");
+	uint32_t handle_A = ts_A_init->handle;
+
+	/* Delete Town A under fog (e.g. wiped out or cleared) */
+	delete town_A;
+
+	/* Allocate Town B. With Town A deleted, pool reuses TownID id_A */
+	TileIndex tile_B = TileXY(90, 90);
+	REQUIRE(Town::CanAllocateItem());
+	Town *town_B = Town::Create(tile_B);
+	REQUIRE(town_B != nullptr);
+	CHECK(town_B->index == id_A); // Pool ID reused!
+	town_B->name = "Sedan";
+	town_B->cache.population = 4200;
+
+	/* Side 0 has not scouted tile A or tile B.
+	 * Town A's snapshot at tile A must remain intact and must NOT be redirected to tile B */
+	const TownSnapshot *ts_A_hidden = MilitaryFog::GetTownSnapshotAtTile(side0, tile_A);
+	REQUIRE(ts_A_hidden != nullptr);
+	CHECK(ts_A_hidden->exists);
+	CHECK(ts_A_hidden->handle == handle_A);
+	CHECK(ts_A_hidden->xy == tile_A);
+	CHECK(ts_A_hidden->name == "Metz");
+	CHECK(ts_A_hidden->population == 3000);
+
+	/* Tile B has no snapshot for side 0 yet */
+	CHECK(MilitaryFog::GetTownSnapshotAtTile(side0, tile_B) == nullptr);
+
+	/* Side 0 scouts tile A: discovers Town A has been removed */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A);
+	const TownSnapshot *ts_A_discovered = MilitaryFog::GetTownSnapshotAtTile(side0, tile_A);
+	CHECK(ts_A_discovered == nullptr); // Exists flag is now false
+
+	/* Side 0 scouts tile B: discovers Town B */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_B);
+	const TownSnapshot *ts_B_scouted = MilitaryFog::GetTownSnapshotAtTile(side0, tile_B);
+	REQUIRE(ts_B_scouted != nullptr);
+	CHECK(ts_B_scouted->exists);
+	CHECK(ts_B_scouted->xy == tile_B);
+	CHECK(ts_B_scouted->name == "Sedan");
+	CHECK(ts_B_scouted->population == 4200);
+	CHECK(ts_B_scouted->handle != handle_A); // New handle assigned
+
+	delete town_B;
+	ResetFogTestEnvironment();
+}
+
+TEST_CASE("MilitaryFog - Town snapshot save/load persistence and continuation equivalence")
+{
+	ResetFogTestEnvironment();
+	extern void ResetHouses();
+	ResetHouses();
+	extern void InitializeLanguagePacks();
+	InitializeLanguagePacks();
+
+	uint8_t side0 = 0;
+	TileIndex tile_A = TileXY(55, 55);
+	TileIndex tile_B = TileXY(85, 85);
+
+	REQUIRE(Town::CanAllocateItem());
+	Town *town_A = Town::Create(tile_A);
+	REQUIRE(town_A != nullptr);
+	town_A->name = "Belfort";
+	town_A->townnametype = SPECSTR_TOWNNAME_START;
+	town_A->cache.population = 1800;
+
+	MilitaryFog::Initialize();
+
+	/* Scout town B as newly discovered town */
+	REQUIRE(Town::CanAllocateItem());
+	Town *town_B = Town::Create(tile_B);
+	REQUIRE(town_B != nullptr);
+	town_B->name = "Nancy";
+	town_B->townnametype = SPECSTR_TOWNNAME_START;
+	town_B->cache.population = 5600;
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_B);
+
+	const TownSnapshot *pre_A = MilitaryFog::GetTownSnapshotAtTile(side0, tile_A);
+	const TownSnapshot *pre_B = MilitaryFog::GetTownSnapshotAtTile(side0, tile_B);
+	REQUIRE(pre_A != nullptr);
+	REQUIRE(pre_B != nullptr);
+	uint32_t handle_A = pre_A->handle;
+	uint32_t handle_B = pre_B->handle;
+
+	/* Save state */
+	SaveLoadResult save_res = SaveOrLoad("test_town_labels_persistence.sav", SaveLoadOperation::Save, DetailedFileType::GameFile, Subdirectory::None, false);
+	REQUIRE(save_res == SaveLoadResult::Ok);
+
+	/* Load state */
+	MilitaryFog::Reset();
+	REQUIRE_FALSE(MilitaryFog::IsActive());
+
+	SaveLoadResult load_res = SaveOrLoad("test_town_labels_persistence.sav", SaveLoadOperation::Load, DetailedFileType::GameFile, Subdirectory::None, false);
+	REQUIRE(load_res == SaveLoadResult::Ok);
+	std::remove("test_town_labels_persistence.sav");
+
+	REQUIRE(MilitaryFog::IsActive());
+
+	/* Verify loaded snapshots match pre-save state exactly */
+	const TownSnapshot *loaded_A = MilitaryFog::GetTownSnapshotAtTile(side0, tile_A);
+	const TownSnapshot *loaded_B = MilitaryFog::GetTownSnapshotAtTile(side0, tile_B);
+	REQUIRE(loaded_A != nullptr);
+	REQUIRE(loaded_B != nullptr);
+
+	CHECK(loaded_A->handle == handle_A);
+	CHECK(loaded_A->name == "Belfort");
+	CHECK(loaded_A->population == 1800);
+	CHECK(loaded_A->xy == tile_A);
+	CHECK(loaded_A->sign.width_normal > 0);
+	CHECK(loaded_A->sign.width_small > 0);
+
+	CHECK(loaded_B->handle == handle_B);
+	CHECK(loaded_B->name == "Nancy");
+	CHECK(loaded_B->population == 5600);
+	CHECK(loaded_B->xy == tile_B);
+	CHECK(loaded_B->sign.width_normal > 0);
+	CHECK(loaded_B->sign.width_small > 0);
+
+	/* Verify continued simulation on loaded state matches uninterrupted simulation */
+	/* Delete town A in loaded live state */
+	Town *loaded_live_A = nullptr;
+	for (Town *t : Town::Iterate()) {
+		if (t->xy == tile_A) {
+			loaded_live_A = t;
+			break;
+		}
+	}
+	REQUIRE(loaded_live_A != nullptr);
+	delete loaded_live_A;
+
+	/* Scouting tile A discovers town A deletion on loaded state */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A);
+	CHECK(MilitaryFog::GetTownSnapshotAtTile(side0, tile_A) == nullptr);
+
+	ResetFogTestEnvironment();
+}

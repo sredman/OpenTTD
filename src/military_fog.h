@@ -34,12 +34,18 @@ enum FogStatus : uint8_t {
 
 /** Stored stationary snapshot of a town. */
 struct TownSnapshot {
-	uint32_t population = 0;   ///< Last-observed population of the town.
-	uint32_t num_houses = 0;   ///< Last-observed number of houses in the town.
-	std::string name{};        ///< Last-observed town name.
-	TileIndex xy = INVALID_TILE; ///< Town center tile.
-	bool larger_town = false;  ///< Whether town is a city.
-	bool exists = false;       ///< Whether the town existed when last observed.
+	uint32_t handle = 0;                     ///< Unique side-local stationary town handle.
+	TownID original_id = TownID::Invalid();   ///< Town ID when observed.
+	TileIndex xy = INVALID_TILE;             ///< Town center tile.
+	uint32_t population = 0;                 ///< Last-observed population of the town.
+	uint32_t num_houses = 0;                 ///< Last-observed number of houses in the town.
+	std::string name{};                      ///< Last-observed town name.
+	bool larger_town = false;                ///< Whether town is a city.
+	bool exists = false;                     ///< Whether the town existed when last observed.
+	ViewportSign sign{};                     ///< Viewport sign coordinates and dimensions.
+
+	void UpdateVirtCoord();
+	std::string GetViewportString(bool small) const;
 };
 
 /** Stored stationary snapshot of an industry. */
@@ -77,6 +83,7 @@ struct SideIntelligence {
 	std::vector<MilitaryContact> contacts;                ///< Known enemy contacts.
 	uint32_t never_scouted_count = 0;                     ///< Count of never-scouted tiles.
 	uint32_t next_industry_handle = 1;                    ///< Next stationary handle to allocate.
+	uint32_t next_town_handle = 1;                        ///< Next stationary town handle to allocate.
 
 	/**
 	 * Allocate memory structures for a given map size.
@@ -253,6 +260,19 @@ public:
 	 * @return Pointer to snapshot, or nullptr if not available.
 	 */
 	static const TownSnapshot *GetTownSnapshot(uint8_t side, TownID town);
+
+	/**
+	 * Get stored snapshot of a town for a specific side by tile location.
+	 * @param side Side index.
+	 * @param tile Tile to query.
+	 * @return Pointer to snapshot, or nullptr if not available.
+	 */
+	static const TownSnapshot *GetTownSnapshotAtTile(uint8_t side, TileIndex tile);
+
+	/**
+	 * Update sign coordinates and dimensions for all town snapshots across all sides.
+	 */
+	static void UpdateAllTownSnapshotVirtCoords();
 
 	/**
 	 * Get stored snapshot of an industry for a specific side by tile location.

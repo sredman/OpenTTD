@@ -1047,6 +1047,36 @@ protected:
 	 */
 	void DrawTowns(const DrawPixelInfo *dpi, const int vertical_padding) const
 	{
+		if (MilitaryFog::IsActive()) {
+			uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
+			if (side < MAX_MILITARY_SIDES) {
+				const auto &intel = MilitaryFog::GetSideIntelligence(side);
+				for (const auto &ts : intel.town_snapshots) {
+					if (!ts.exists || !IsValidTile(ts.xy)) continue;
+
+					uint16_t sign_width = ts.sign.width_small;
+					if (sign_width == 0) {
+						sign_width = static_cast<uint16_t>(GetStringBoundingBox(ts.name, FontSize::Small).width);
+					}
+
+					/* Remap the town coordinate */
+					Point pt = this->RemapTile(TileX(ts.xy), TileY(ts.xy));
+					int x = pt.x - this->subscroll - (sign_width >> 1);
+					int y = pt.y + vertical_padding;
+
+					/* Check if the town sign is within bounds */
+					if (x + sign_width > dpi->left &&
+							x < dpi->left + dpi->width &&
+							y + GetCharacterHeight(FontSize::Small) > dpi->top &&
+							y < dpi->top + dpi->height) {
+						/* And draw it. */
+						DrawString(x, x + sign_width, y, ts.name, TextColour::White, AlignmentH::Start, false, FontSize::Small);
+					}
+				}
+				return;
+			}
+		}
+
 		for (const Town *t : Town::Iterate()) {
 			/* Remap the town coordinate */
 			Point pt = this->RemapTile(TileX(t->xy), TileY(t->xy));

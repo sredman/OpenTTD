@@ -1399,6 +1399,27 @@ static void ViewportAddTownStrings(DrawPixelInfo *dpi, const std::vector<const T
 }
 
 /**
+ * Add town snapshot strings to a viewport when military fog is active.
+ * @param dpi Current viewport area.
+ * @param town_snapshots List of snapshots to add.
+ * @param small Add small versions of strings.
+ */
+static void ViewportAddTownSnapshotStrings(DrawPixelInfo *dpi, const std::vector<TownSnapshot> &town_snapshots, bool small)
+{
+	ViewportStringFlags flags{};
+	if (small) flags.Set({ViewportStringFlag::Small, ViewportStringFlag::Shadow});
+
+	for (const auto &ts : town_snapshots) {
+		if (!ts.exists || !IsValidTile(ts.xy)) continue;
+
+		std::string *str = ViewportAddString(dpi, &ts.sign, flags, Colours::Invalid);
+		if (str == nullptr) continue;
+
+		*str = ts.GetViewportString(small);
+	}
+}
+
+/**
  * Add sign strings to a viewport.
  * @param dpi Current viewport area.
  * @param signs List of signs to add.
@@ -1500,6 +1521,7 @@ static void ViewportAddKdtreeSigns(DrawPixelInfo *dpi)
 
 			case ViewportSignKdtreeItem::VKI_TOWN:
 				if (!show_towns) break;
+				if (MilitaryFog::IsActive() && (ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide()) < MAX_MILITARY_SIDES) break;
 				towns.push_back(Town::Get(std::get<TownID>(item.id)));
 				break;
 
@@ -1525,7 +1547,18 @@ static void ViewportAddKdtreeSigns(DrawPixelInfo *dpi)
 	bool small = dpi->zoom >= ZoomLevel::Out4x;
 
 	/* Layering order (bottom to top): Town names, signs, stations */
-	ViewportAddTownStrings(dpi, towns, small);
+	if (MilitaryFog::IsActive()) {
+		uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
+		if (side < MAX_MILITARY_SIDES) {
+			if (show_towns) {
+				ViewportAddTownSnapshotStrings(dpi, MilitaryFog::GetSideIntelligence(side).town_snapshots, small);
+			}
+		} else {
+			ViewportAddTownStrings(dpi, towns, small);
+		}
+	} else {
+		ViewportAddTownStrings(dpi, towns, small);
+	}
 
 	/* Do not draw signs nor station names if they are set invisible */
 	if (IsInvisibilitySet(TransparencyOption::Signs)) return;

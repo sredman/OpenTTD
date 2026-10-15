@@ -58,6 +58,7 @@
 #include "road_cmd.h"
 #include "terraform_cmd.h"
 #include "tunnelbridge_cmd.h"
+#include "military_fog.h"
 #include "clear_map.h"
 #include "tree_map.h"
 #include "map_func.h"
@@ -406,6 +407,9 @@ void UpdateAllTownVirtCoords()
 {
 	for (Town *t : Town::Iterate()) {
 		t->UpdateVirtCoord();
+	}
+	if (MilitaryFog::IsActive()) {
+		MilitaryFog::UpdateAllTownSnapshotVirtCoords();
 	}
 }
 

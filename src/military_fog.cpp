@@ -16,6 +16,12 @@
 #include "viewport_func.h"
 #include "vehicle_func.h"
 #include "language.h"
+#include "core/string_builder.hpp"
+#include "strings_func.h"
+#include "table/control_codes.h"
+#include "table/strings.h"
+#include "landscape.h"
+#include "settings_type.h"
 #include <algorithm>
 #include "safeguards.h"
 
@@ -39,6 +45,66 @@ static std::string GetSafeIndustryName(const Industry *i)
 		return i->GetCachedName();
 	}
 	return "";
+}
+
+/**
+ * Get safe cached name of a town without triggering unloaded string table assertion in headless/test environments.
+ * @param t The town to query.
+ * @return The cached town name, or empty string.
+ */
+static std::string GetSafeTownName(const Town *t)
+{
+	if (t == nullptr) return "";
+	if (!t->cached_name.empty()) return t->cached_name;
+	if (!t->name.empty()) return t->name;
+	if (_current_language != nullptr) {
+		return t->GetCachedName();
+	}
+	return t->name;
+}
+
+std::string TownSnapshot::GetViewportString(bool small) const
+{
+	if (small) return this->name;
+	std::string res;
+	StringBuilder sb(res);
+	if (_settings_client.gui.population_in_label) {
+		std::string pop = (_current_language != nullptr) ? GetString(STR_JUST_COMMA, this->population) : fmt::format("{}", this->population);
+		sb += this->name;
+		sb += " (";
+		sb += pop;
+		sb += ")";
+		if (this->larger_town) {
+			sb += " ";
+			sb.PutUtf8(SCC_CITY);
+		}
+		return res;
+	}
+	sb += this->name;
+	if (this->larger_town) {
+		sb += " ";
+		sb.PutUtf8(SCC_CITY);
+	}
+	return res;
+}
+
+void TownSnapshot::UpdateVirtCoord()
+{
+	if (!this->exists || !IsValidTile(this->xy)) return;
+
+	Point pt = RemapCoords2(TileX(this->xy) * TILE_SIZE, TileY(this->xy) * TILE_SIZE);
+
+	std::string str_normal = this->GetViewportString(false);
+	std::string str_small = this->GetViewportString(true);
+
+	if (_current_language != nullptr) {
+		this->sign.UpdatePosition(pt.x, pt.y - 24 * ZOOM_BASE, str_normal, str_small);
+	} else {
+		this->sign.center = pt.x;
+		this->sign.top = pt.y - 24 * ZOOM_BASE;
+		this->sign.width_normal = static_cast<uint16_t>(std::max<size_t>(str_normal.size() * 8, 40));
+		this->sign.width_small = static_cast<uint16_t>(std::max<size_t>(str_small.size() * 6, 20));
+	}
 }
 
 
@@ -103,20 +169,23 @@ void MilitaryFog::Initialize()
 			std::copy_n(Tile::extended_tiles.get(), map_size, _side_intelligence[s].extended_tiles.get());
 		}
 
-		/* Snapshot starting towns */
-		_side_intelligence[s].town_snapshots.resize(Town::GetPoolSize());
+		/* Snapshot starting towns with location-anchored handles */
+		_side_intelligence[s].town_snapshots.clear();
+		uint32_t town_h = 1;
 		for (const Town *t : Town::Iterate()) {
-			if (_side_intelligence[s].town_snapshots.size() <= t->index.base()) {
-				_side_intelligence[s].town_snapshots.resize(t->index.base() + 64);
-			}
-			TownSnapshot &ts = _side_intelligence[s].town_snapshots[t->index.base()];
+			TownSnapshot ts;
+			ts.handle = town_h++;
+			ts.original_id = t->index;
 			ts.population = t->cache.population;
 			ts.num_houses = t->cache.num_houses;
-			ts.name = t->name;
+			ts.name = GetSafeTownName(t);
 			ts.xy = t->xy;
 			ts.larger_town = t->larger_town;
 			ts.exists = true;
+			ts.UpdateVirtCoord();
+			_side_intelligence[s].town_snapshots.push_back(std::move(ts));
 		}
+		_side_intelligence[s].next_town_handle = town_h;
 
 		/* Snapshot starting industries with location-anchored handles and footprint tiles */
 		_side_intelligence[s].industry_snapshots.clear();
@@ -268,21 +337,65 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 	intel.base_tiles[tile.base()] = Tile::base_tiles[tile.base()];
 	intel.extended_tiles[tile.base()] = Tile::extended_tiles[tile.base()];
 
-	/* Refresh town snapshot if tile belongs to a town */
-	if (IsTileType(tile, TileType::House)) {
+	/* Refresh town snapshot if tile is a town center or belongs to a town */
+	const Town *live_town = nullptr;
+	for (const Town *t : Town::Iterate()) {
+		if (t->xy == tile) {
+			live_town = t;
+			break;
+		}
+	}
+	if (live_town == nullptr && IsTileType(tile, TileType::House)) {
 		TownID tid = GetTownIndex(tile);
 		if (Town::IsValidID(tid)) {
-			const Town *t = Town::Get(tid);
-			if (intel.town_snapshots.size() <= tid.base()) {
-				intel.town_snapshots.resize(tid.base() + 64);
+			live_town = Town::Get(tid);
+		}
+	}
+
+	if (live_town != nullptr) {
+		TownSnapshot *match = nullptr;
+		for (auto &ts : intel.town_snapshots) {
+			if (ts.xy == live_town->xy) {
+				match = &ts;
+				break;
 			}
-			TownSnapshot &ts = intel.town_snapshots[tid.base()];
-			ts.population = t->cache.population;
-			ts.num_houses = t->cache.num_houses;
-			ts.name = t->name;
-			ts.xy = t->xy;
-			ts.larger_town = t->larger_town;
+		}
+		if (match == nullptr) {
+			TownSnapshot ts;
+			ts.handle = intel.next_town_handle++;
+			ts.original_id = live_town->index;
+			ts.xy = live_town->xy;
+			ts.name = GetSafeTownName(live_town);
+			ts.population = live_town->cache.population;
+			ts.num_houses = live_town->cache.num_houses;
+			ts.larger_town = live_town->larger_town;
 			ts.exists = true;
+			ts.UpdateVirtCoord();
+			intel.town_snapshots.push_back(std::move(ts));
+		} else {
+			match->name = GetSafeTownName(live_town);
+			match->population = live_town->cache.population;
+			match->num_houses = live_town->cache.num_houses;
+			match->larger_town = live_town->larger_town;
+			match->original_id = live_town->index;
+			match->exists = true;
+			match->UpdateVirtCoord();
+		}
+	} else {
+		/* Tile is not part of any live town. If it was a known town center, discover town deletion */
+		for (auto &ts : intel.town_snapshots) {
+			if (ts.xy == tile && ts.exists) {
+				bool live_found = false;
+				for (const Town *t : Town::Iterate()) {
+					if (t->xy == tile) {
+						live_found = true;
+						break;
+					}
+				}
+				if (!live_found) {
+					ts.exists = false;
+				}
+			}
 		}
 	}
 
@@ -414,16 +527,51 @@ void MilitaryFog::UpdateAircraftScouting(DisasterVehicle *aircraft)
 	/* Also explicitly refresh town snapshots if their center/location is within radius */
 	for (const Town *t : Town::Iterate()) {
 		if (DistanceSquare(t->xy, center_tile) <= static_cast<uint>(r * r)) {
-			if (intel.town_snapshots.size() <= t->index.base()) {
-				intel.town_snapshots.resize(t->index.base() + 64);
+			TownSnapshot *match = nullptr;
+			for (auto &ts : intel.town_snapshots) {
+				if (ts.xy == t->xy) {
+					match = &ts;
+					break;
+				}
 			}
-			TownSnapshot &ts = intel.town_snapshots[t->index.base()];
-			ts.population = t->cache.population;
-			ts.num_houses = t->cache.num_houses;
-			ts.name = t->name;
-			ts.xy = t->xy;
-			ts.larger_town = t->larger_town;
-			ts.exists = true;
+			if (match == nullptr) {
+				TownSnapshot ts;
+				ts.handle = intel.next_town_handle++;
+				ts.original_id = t->index;
+				ts.xy = t->xy;
+				ts.name = GetSafeTownName(t);
+				ts.population = t->cache.population;
+				ts.num_houses = t->cache.num_houses;
+				ts.larger_town = t->larger_town;
+				ts.exists = true;
+				ts.UpdateVirtCoord();
+				intel.town_snapshots.push_back(std::move(ts));
+			} else {
+				match->name = GetSafeTownName(t);
+				match->population = t->cache.population;
+				match->num_houses = t->cache.num_houses;
+				match->larger_town = t->larger_town;
+				match->original_id = t->index;
+				match->exists = true;
+				match->UpdateVirtCoord();
+			}
+		}
+	}
+
+	/* Also check if any known snapshot in radius has ceased to exist */
+	for (auto &ts : intel.town_snapshots) {
+		if (!ts.exists) continue;
+		if (DistanceSquare(ts.xy, center_tile) <= static_cast<uint>(r * r)) {
+			bool live_found = false;
+			for (const Town *t : Town::Iterate()) {
+				if (t->xy == ts.xy) {
+					live_found = true;
+					break;
+				}
+			}
+			if (!live_found) {
+				ts.exists = false;
+			}
 		}
 	}
 
@@ -634,8 +782,38 @@ const TownSnapshot *MilitaryFog::GetTownSnapshot(uint8_t side, TownID town)
 {
 	if (!_military_fog_active || side >= MAX_MILITARY_SIDES) return nullptr;
 	const auto &snaps = _side_intelligence[side].town_snapshots;
-	if (town.base() >= snaps.size() || !snaps[town.base()].exists) return nullptr;
-	return &snaps[town.base()];
+	if (Town::IsValidID(town)) {
+		TileIndex xy = Town::Get(town)->xy;
+		for (const auto &ts : snaps) {
+			if (ts.exists && ts.xy == xy) return &ts;
+		}
+	}
+	for (const auto &ts : snaps) {
+		if (ts.exists && ts.original_id == town) return &ts;
+	}
+	return nullptr;
+}
+
+const TownSnapshot *MilitaryFog::GetTownSnapshotAtTile(uint8_t side, TileIndex tile)
+{
+	if (!_military_fog_active || side >= MAX_MILITARY_SIDES) return nullptr;
+	const auto &snaps = _side_intelligence[side].town_snapshots;
+	for (const auto &ts : snaps) {
+		if (ts.exists && ts.xy == tile) return &ts;
+	}
+	return nullptr;
+}
+
+void MilitaryFog::UpdateAllTownSnapshotVirtCoords()
+{
+	if (!_military_fog_active) return;
+	for (uint8_t s = 0; s < MAX_MILITARY_SIDES; s++) {
+		for (auto &ts : _side_intelligence[s].town_snapshots) {
+			if (ts.exists) {
+				ts.UpdateVirtCoord();
+			}
+		}
+	}
 }
 
 const IndustrySnapshot *MilitaryFog::GetIndustrySnapshotAtTile(uint8_t side, TileIndex tile)
@@ -1029,10 +1207,14 @@ void MilitaryFog::Load()
 				for (uint16_t k = 0; k < name_len; k++) {
 					ts.name[k] = static_cast<char>(SlReadByte());
 				}
+				ts.handle = j + 1;
+				ts.original_id = TownID{static_cast<uint16_t>(j)};
+				ts.UpdateVirtCoord();
 			} else {
 				ts = TownSnapshot{};
 			}
 		}
+		intel.next_town_handle = num_towns + 1;
 
 		uint32_t next_h = (static_cast<uint32_t>(SlReadByte()) << 24);
 		next_h |= (static_cast<uint32_t>(SlReadByte()) << 16);

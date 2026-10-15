@@ -14,10 +14,21 @@ OPENTTD_PID=""
 cleanup() {
   echo "Cleaning up temporary fixture files and background processes..."
   rm -rf "${DEMO_ENV_DIR}"
-  if [ -n "${OPENTTD_PID}" ]; then kill "${OPENTTD_PID}" 2>/dev/null || true; fi
+  if [ -n "${OPENTTD_PID}" ] && kill -0 "${OPENTTD_PID}" 2>/dev/null; then
+    kill "${OPENTTD_PID}" 2>/dev/null || true
+  fi
   if [ -n "${XVNC_PID}" ]; then
-    kill "${XVNC_PID}" 2>/dev/null || true
-    rm -f "/tmp/.X${DISPLAY_NUM#:}-lock" "/tmp/.X11-unix/X${DISPLAY_NUM#:}" 2>/dev/null || true
+    if kill -0 "${XVNC_PID}" 2>/dev/null; then
+      kill "${XVNC_PID}" 2>/dev/null || true
+    fi
+    local lock_file="/tmp/.X${DISPLAY_NUM#:}-lock"
+    if [ -f "${lock_file}" ]; then
+      local lock_pid
+      lock_pid="$(tr -d '[:space:]' < "${lock_file}" 2>/dev/null || true)"
+      if [ "${lock_pid}" = "${XVNC_PID}" ]; then
+        rm -f "${lock_file}" "/tmp/.X11-unix/X${DISPLAY_NUM#:}" 2>/dev/null || true
+      fi
+    fi
   fi
 }
 trap cleanup EXIT INT TERM
@@ -25,8 +36,14 @@ trap cleanup EXIT INT TERM
 echo "=== 1. Starting isolated Xvnc on ${DISPLAY_NUM} ==="
 if ! pgrep -f "Xvnc ${DISPLAY_NUM}" >/dev/null; then
   Xvnc "${DISPLAY_NUM}" -geometry 1280x800 -depth 24 -SecurityTypes None -rfbport 0 -interface 127.0.0.1 &
-  XVNC_PID=$!
+  STARTED_PID=$!
   sleep 1
+  if kill -0 "${STARTED_PID}" 2>/dev/null; then
+    XVNC_PID="${STARTED_PID}"
+  else
+    echo "ERROR: Failed to start Xvnc on ${DISPLAY_NUM}" >&2
+    exit 1
+  fi
 fi
 
 echo "=== 2. Preparing isolated environment and ephemeral scripts ==="

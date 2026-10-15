@@ -33,6 +33,7 @@
 #include "../void_map.h"
 #include "../vehicle_func.h"
 #include "mock_environment.h"
+#include "../smallmap_gui.h"
 #include <cstdio>
 #include <filesystem>
 
@@ -1154,15 +1155,18 @@ TEST_CASE("MilitaryFog - Decoupled stale stationary snapshots survive live pool 
 		CHECK(td_A2.str == GetIndustrySpec(0)->name);
 		CHECK(td_A2.owner[0] == OWNER_NONE);
 
-		/* Main-map palette colour */
-		const IndustrySnapshot *snap_A1 = MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_A);
-		REQUIRE(snap_A1 != nullptr);
-		CHECK(snap_A1->colour == Colours::Red);
-		CHECK(snap_A1->type == 0);
+		/* Main-map palette colour and selectors */
+		CHECK(GetIndustryTileColour(ind_tile_A) == Colours::Red);
+		CHECK(GetIndustryTilePalette(ind_tile_A) == GetColourPalette(Colours::Red));
+		CHECK(GetIndustryTileColour(ind_tile_A2) == Colours::Red);
+		CHECK(GetIndustryTilePalette(ind_tile_A2) == GetColourPalette(Colours::Red));
 
-		/* Minimap type, colour and count */
-		CHECK(GetIndustrySpec(snap_A1->type)->map_colour.p * 0x01010101 != 0);
-		CHECK(MilitaryFog::GetIndustryTypeCount(0, 0) == 1);
+		/* Minimap type, colour, count, and formatted legend */
+		CHECK(GetSmallMapIndustryType(ind_tile_A) == 0);
+		CHECK(GetSmallMapIndustryType(ind_tile_A2) == 0);
+		CHECK(GetSmallMapIndustryPixel(ind_tile_A) == static_cast<uint32_t>(GetIndustrySpec(0)->map_colour.p * 0x01010101));
+		CHECK(GetSmallMapIndustryPixel(ind_tile_A2) == static_cast<uint32_t>(GetIndustrySpec(0)->map_colour.p * 0x01010101));
+		CHECK(GetSmallMapIndustryCount(0) == 1);
 
 		/* Shared production selector */
 		CHECK(MilitaryFog::GetIndustryProduction(0, ind_tile_A) == 100);
@@ -1215,6 +1219,26 @@ TEST_CASE("MilitaryFog - Decoupled stale stationary snapshots survive live pool 
 
 	CHECK(MilitaryFog::GetIndustryTypeCount(0, 0) == 1); // Stale A still counted
 	CHECK(MilitaryFog::GetIndustryTypeCount(0, 2) == 1); // Observed B now counted
+
+	/* Consumers for stale A and newly observed B */
+	{
+		ActiveSnapshotScope scope(0);
+		/* Stale Industry A: remembered graphics/palette and minimap selection unchanged */
+		CHECK(GetIndustryTileColour(ind_tile_A) == Colours::Red);
+		CHECK(GetIndustryTilePalette(ind_tile_A) == GetColourPalette(Colours::Red));
+		CHECK(GetSmallMapIndustryType(ind_tile_A) == 0);
+		CHECK(GetSmallMapIndustryType(ind_tile_A2) == 0);
+
+		/* Newly observed Industry B */
+		CHECK(GetIndustryTileColour(ind_tile_B) == Colours::Green);
+		CHECK(GetIndustryTilePalette(ind_tile_B) == GetColourPalette(Colours::Green));
+		CHECK(GetSmallMapIndustryType(ind_tile_B) == 2);
+		CHECK(GetSmallMapIndustryPixel(ind_tile_B) == static_cast<uint32_t>(GetIndustrySpec(2)->map_colour.p * 0x01010101));
+
+		/* Minimap counts and formatted labels */
+		CHECK(GetSmallMapIndustryCount(0) == 1); // Stale Coal Mine A still counted
+		CHECK(GetSmallMapIndustryCount(2) == 1); // Newly observed Sawmill B counted
+	}
 
 	/* Now setup Industry C to test same-root appearance change and partial observation */
 	TileIndex ind_tile_C = TileXY(110, 110);
@@ -1279,9 +1303,19 @@ TEST_CASE("MilitaryFog - Decoupled stale stationary snapshots survive live pool 
 		CHECK(td_C2.str == GetIndustrySpec(0)->name);
 		CHECK(td_C2.owner[0] == OWNER_NONE); // Hidden tile keeps old owner in tile desc!
 
-		/* Main-map colours from snapshots */
-		CHECK(MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_C)->colour == Colours::Blue);
-		CHECK(MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_C2)->colour == Colours::Red);
+		/* Main-map colours and palettes */
+		CHECK(GetIndustryTileColour(ind_tile_C) == Colours::Blue);
+		CHECK(GetIndustryTilePalette(ind_tile_C) == GetColourPalette(Colours::Blue));
+		CHECK(GetIndustryTileColour(ind_tile_C2) == Colours::Red); // Hidden tile retains last observed colour/palette!
+		CHECK(GetIndustryTilePalette(ind_tile_C2) == GetColourPalette(Colours::Red));
+
+		/* Minimap type, pixel colour, counts and formatted legend entries */
+		CHECK(GetSmallMapIndustryType(ind_tile_C) == 0);
+		CHECK(GetSmallMapIndustryType(ind_tile_C2) == 0);
+		CHECK(GetSmallMapIndustryPixel(ind_tile_C) == static_cast<uint32_t>(GetIndustrySpec(0)->map_colour.p * 0x01010101));
+		CHECK(GetSmallMapIndustryPixel(ind_tile_C2) == static_cast<uint32_t>(GetIndustrySpec(0)->map_colour.p * 0x01010101));
+		CHECK(GetSmallMapIndustryCount(0) == 2); // 1 for A + 1 for C = 2
+		CHECK(GetSmallMapIndustryCount(2) == 1); // 1 for B
 	}
 
 	/* Save game state for uninterrupted vs loaded comparison with mixed old/new footprint state */
@@ -1301,6 +1335,20 @@ TEST_CASE("MilitaryFog - Decoupled stale stationary snapshots survive live pool 
 	CHECK(unint_A2->exists);
 	CHECK(MilitaryFog::GetIndustryTypeCount(0, 0) == 2); // A still has an unobserved tile, so count remains 2 (A + C)
 
+	/* Partial observation consumers: A1 cleared, A2 hidden retains remembered state */
+	{
+		ActiveSnapshotScope scope(0);
+		CHECK(GetSmallMapIndustryType(ind_tile_A) == IT_INVALID);
+		CHECK(GetIndustryTileColour(ind_tile_A) == Colours::Grey);
+		CHECK(GetSmallMapIndustryType(ind_tile_A2) == 0);
+		CHECK(GetIndustryTileColour(ind_tile_A2) == Colours::Red);
+		CHECK(GetIndustryTilePalette(ind_tile_A2) == GetColourPalette(Colours::Red));
+		TileDesc td_A2{};
+		GetTileDesc(ind_tile_A2, td_A2);
+		CHECK(td_A2.str == GetIndustrySpec(0)->name);
+		CHECK(GetSmallMapIndustryCount(0) == 2);
+	}
+
 	/* 2. Full observation of A: scout tile A2. Now all footprint tiles of A are clear */
 	MilitaryFog::RefreshStationarySnapshot(0, ind_tile_A2);
 
@@ -1309,11 +1357,30 @@ TEST_CASE("MilitaryFog - Decoupled stale stationary snapshots survive live pool 
 	CHECK(MilitaryFog::GetIndustrySnapshotByHandle(0, handle_A) == nullptr);
 	CHECK(MilitaryFog::GetIndustryTypeCount(0, 0) == 1); // A removed, only C remains!
 
+	/* Full observation consumers: all tiles of A cleared */
+	{
+		ActiveSnapshotScope scope(0);
+		CHECK(GetSmallMapIndustryType(ind_tile_A) == IT_INVALID);
+		CHECK(GetSmallMapIndustryType(ind_tile_A2) == IT_INVALID);
+		CHECK(GetIndustryTileColour(ind_tile_A2) == Colours::Grey);
+		CHECK(GetSmallMapIndustryCount(0) == 1);
+	}
+
 	/* 3. Scout C2: now C2 is also observed with Blue */
 	MilitaryFog::RefreshStationarySnapshot(0, ind_tile_C2);
 	CHECK(MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_C2)->colour == Colours::Blue);
 	CHECK(MilitaryFog::GetIndustryTypeCount(0, 0) == 1);
 	CHECK(MilitaryFog::GetIndustryTypeCount(0, 2) == 1); // B still intact
+
+	/* Observation of C2 consumers */
+	{
+		ActiveSnapshotScope scope(0);
+		CHECK(GetIndustryTileColour(ind_tile_C2) == Colours::Blue);
+		CHECK(GetIndustryTilePalette(ind_tile_C2) == GetColourPalette(Colours::Blue));
+		CHECK(GetSmallMapIndustryType(ind_tile_C2) == 0);
+		CHECK(GetSmallMapIndustryCount(0) == 1);
+		CHECK(GetSmallMapIndustryCount(2) == 1);
+	}
 
 	/* --- PATH 2: Loaded continuation --- */
 	MilitaryFog::Reset();
@@ -1359,11 +1426,27 @@ TEST_CASE("MilitaryFog - Decoupled stale stationary snapshots survive live pool 
 		ActiveSnapshotScope scope(0);
 		TileDesc td_C1{};
 		GetTileDesc(ind_tile_C, td_C1);
+		CHECK(td_C1.str == GetIndustrySpec(0)->name);
 		CHECK(td_C1.owner[0] == Owner{1});
 
 		TileDesc td_C2{};
 		GetTileDesc(ind_tile_C2, td_C2);
+		CHECK(td_C2.str == GetIndustrySpec(0)->name);
 		CHECK(td_C2.owner[0] == OWNER_NONE);
+
+		/* Main-map colours and palettes */
+		CHECK(GetIndustryTileColour(ind_tile_C) == Colours::Blue);
+		CHECK(GetIndustryTilePalette(ind_tile_C) == GetColourPalette(Colours::Blue));
+		CHECK(GetIndustryTileColour(ind_tile_C2) == Colours::Red);
+		CHECK(GetIndustryTilePalette(ind_tile_C2) == GetColourPalette(Colours::Red));
+
+		/* Minimap type, pixel colour, counts and formatted legend entries */
+		CHECK(GetSmallMapIndustryType(ind_tile_C) == 0);
+		CHECK(GetSmallMapIndustryType(ind_tile_C2) == 0);
+		CHECK(GetSmallMapIndustryPixel(ind_tile_C) == static_cast<uint32_t>(GetIndustrySpec(0)->map_colour.p * 0x01010101));
+		CHECK(GetSmallMapIndustryPixel(ind_tile_C2) == static_cast<uint32_t>(GetIndustrySpec(0)->map_colour.p * 0x01010101));
+		CHECK(GetSmallMapIndustryCount(0) == 2);
+		CHECK(GetSmallMapIndustryCount(2) == 1);
 
 		CHECK(MilitaryFog::GetIndustryProduction(0, ind_tile_C) == 200);
 	}
@@ -1378,11 +1461,32 @@ TEST_CASE("MilitaryFog - Decoupled stale stationary snapshots survive live pool 
 	CHECK(MilitaryFog::GetIndustrySnapshotAtTile(1, ind_tile_A) != nullptr);
 	CHECK(MilitaryFog::GetIndustryTypeCount(1, 0) == 1);
 
+	{
+		ActiveSnapshotScope scope_side1(1);
+		CHECK(GetSmallMapIndustryType(ind_tile_B) == IT_INVALID);
+		CHECK(GetSmallMapIndustryType(ind_tile_C) == IT_INVALID);
+		CHECK(GetSmallMapIndustryCount(0) == 1);
+		CHECK(GetSmallMapIndustryCount(2) == 0);
+	}
+
 	/* Perform identical partial observation of A on loaded continuation */
 	MilitaryFog::RefreshStationarySnapshot(0, ind_tile_A);
 	CHECK(MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_A) == nullptr);
 	CHECK(MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_A2)->colour == Colours::Red);
 	CHECK(MilitaryFog::GetIndustryTypeCount(0, 0) == 2);
+
+	{
+		ActiveSnapshotScope scope(0);
+		CHECK(GetSmallMapIndustryType(ind_tile_A) == IT_INVALID);
+		CHECK(GetIndustryTileColour(ind_tile_A) == Colours::Grey);
+		CHECK(GetSmallMapIndustryType(ind_tile_A2) == 0);
+		CHECK(GetIndustryTileColour(ind_tile_A2) == Colours::Red);
+		CHECK(GetIndustryTilePalette(ind_tile_A2) == GetColourPalette(Colours::Red));
+		TileDesc td_A2{};
+		GetTileDesc(ind_tile_A2, td_A2);
+		CHECK(td_A2.str == GetIndustrySpec(0)->name);
+		CHECK(GetSmallMapIndustryCount(0) == 2);
+	}
 
 	/* Save and reload during partial footprint observation to prove persistence */
 	SaveLoadResult part_save_res = SaveOrLoad("test_partial.sav", SaveLoadOperation::Save, DetailedFileType::GameFile, Subdirectory::None, false);
@@ -1402,6 +1506,19 @@ TEST_CASE("MilitaryFog - Decoupled stale stationary snapshots survive live pool 
 	CHECK(reloaded_A2->exists);
 	CHECK(MilitaryFog::GetIndustryTypeCount(0, 0) == 2);
 
+	{
+		ActiveSnapshotScope scope(0);
+		CHECK(GetSmallMapIndustryType(ind_tile_A) == IT_INVALID);
+		CHECK(GetIndustryTileColour(ind_tile_A) == Colours::Grey);
+		CHECK(GetSmallMapIndustryType(ind_tile_A2) == 0);
+		CHECK(GetIndustryTileColour(ind_tile_A2) == Colours::Red);
+		CHECK(GetIndustryTilePalette(ind_tile_A2) == GetColourPalette(Colours::Red));
+		TileDesc td_A2{};
+		GetTileDesc(ind_tile_A2, td_A2);
+		CHECK(td_A2.str == GetIndustrySpec(0)->name);
+		CHECK(GetSmallMapIndustryCount(0) == 2);
+	}
+
 	/* Perform identical full observation of A */
 	MilitaryFog::RefreshStationarySnapshot(0, ind_tile_A2);
 	CHECK(MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_A) == nullptr);
@@ -1409,11 +1526,28 @@ TEST_CASE("MilitaryFog - Decoupled stale stationary snapshots survive live pool 
 	CHECK(MilitaryFog::GetIndustrySnapshotByHandle(0, handle_A) == nullptr);
 	CHECK(MilitaryFog::GetIndustryTypeCount(0, 0) == 1);
 
+	{
+		ActiveSnapshotScope scope(0);
+		CHECK(GetSmallMapIndustryType(ind_tile_A) == IT_INVALID);
+		CHECK(GetSmallMapIndustryType(ind_tile_A2) == IT_INVALID);
+		CHECK(GetIndustryTileColour(ind_tile_A2) == Colours::Grey);
+		CHECK(GetSmallMapIndustryCount(0) == 1);
+	}
+
 	/* Perform identical observation of C2 */
 	MilitaryFog::RefreshStationarySnapshot(0, ind_tile_C2);
 	CHECK(MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_C2)->colour == Colours::Blue);
 	CHECK(MilitaryFog::GetIndustryTypeCount(0, 0) == 1);
 	CHECK(MilitaryFog::GetIndustryTypeCount(0, 2) == 1);
+
+	{
+		ActiveSnapshotScope scope(0);
+		CHECK(GetIndustryTileColour(ind_tile_C2) == Colours::Blue);
+		CHECK(GetIndustryTilePalette(ind_tile_C2) == GetColourPalette(Colours::Blue));
+		CHECK(GetSmallMapIndustryType(ind_tile_C2) == 0);
+		CHECK(GetSmallMapIndustryCount(0) == 1);
+		CHECK(GetSmallMapIndustryCount(2) == 1);
+	}
 
 	/* Clean up */
 	Industry *loaded_ind_B = Industry::GetIfValid(saved_id);

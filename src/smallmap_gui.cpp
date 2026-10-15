@@ -630,6 +630,55 @@ static constexpr VehicleTypeIndexArray<PixelColour, VehicleType::End> _vehicle_t
 	PC_RED, PC_YELLOW, PC_LIGHT_BLUE, PC_WHITE, PC_BLACK, PC_RED
 };
 
+/**
+ * Get the industry type for a tile in smallmap view, respecting military fog snapshots if active.
+ * @param tile Tile to inspect
+ * @return IndustryType or IT_INVALID if tile has no known industry
+ */
+IndustryType GetSmallMapIndustryType(TileIndex tile)
+{
+	if (MilitaryFog::IsActive()) {
+		uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
+		if (side < MAX_MILITARY_SIDES) {
+			const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshotAtTile(side, tile);
+			if (is != nullptr) return is->type;
+			return IT_INVALID;
+		}
+	}
+	const Industry *ind = Industry::GetByTileIfValid(tile);
+	return (ind != nullptr) ? ind->type : IT_INVALID;
+}
+
+/**
+ * Get the smallmap count for an industry type, respecting military fog snapshots if active.
+ * @param type IndustryType to count
+ * @return Number of industries of this type known to the viewer
+ */
+size_t GetSmallMapIndustryCount(IndustryType type)
+{
+	if (MilitaryFog::IsActive()) {
+		uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
+		if (side < MAX_MILITARY_SIDES) {
+			return MilitaryFog::GetIndustryTypeCount(side, type);
+		}
+	}
+	return Industry::GetIndustryTypeCount(type);
+}
+
+/**
+ * Get the 32-bit pixel colour for an industry tile in Industries smallmap view.
+ * @param tile Tile to inspect
+ * @return 32-bit smallmap pixel colour (replicated 4x for 2x2 blit), or 0 if invalid
+ */
+uint32_t GetSmallMapIndustryPixel(TileIndex tile)
+{
+	IndustryType type = GetSmallMapIndustryType(tile);
+	if (type != IT_INVALID && type < NUM_INDUSTRYTYPES) {
+		return GetIndustrySpec(type)->map_colour.p * 0x01010101;
+	}
+	return 0;
+}
+
 /** Class managing the smallmap window. */
 class SmallMapWindow : public Window {
 	friend void ShowSmallMapIndustries();
@@ -1401,23 +1450,12 @@ protected:
 					if (this->map_type == SmallMapType::Industries) {
 						/* If industry is allowed to be seen, use its colour on the map.
 						 * This has the highest priority above any value in _tiletype_importance. */
-						IndustryType type = IT_INVALID;
-						if (ActiveSnapshotScope::IsActive()) {
-							const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshotAtTile(ActiveSnapshotScope::GetCurrentSide(), ti);
-							if (is != nullptr) {
-								type = is->type;
-							}
-						} else {
-							const Industry *ind = Industry::GetByTileIfValid(ti);
-							if (ind != nullptr) {
-								type = ind->type;
-							}
-						}
+						IndustryType type = GetSmallMapIndustryType(ti);
 						if (type != IT_INVALID && type < NUM_INDUSTRYTYPES && _legend_from_industries[_industry_to_list_pos[type]].show_on_map) {
 							if (type == _smallmap_industry_highlight) {
 								if (_smallmap_industry_highlight_state) return MKCOLOUR_XXXX(PC_WHITE);
 							} else {
-								return GetIndustrySpec(type)->map_colour.p * 0x01010101;
+								return GetSmallMapIndustryPixel(ti);
 							}
 						}
 						/* Otherwise make it disappear */
@@ -1729,13 +1767,7 @@ public:
 								legend_colour = _smallmap_industry_highlight_state ? PC_WHITE : PC_BLACK;
 							}
 							{
-								size_t count = Industry::GetIndustryTypeCount(tbl.industry_type);
-								if (MilitaryFog::IsActive()) {
-									uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
-									if (side < MAX_MILITARY_SIDES) {
-										count = MilitaryFog::GetIndustryTypeCount(side, tbl.industry_type);
-									}
-								}
+								size_t count = GetSmallMapIndustryCount(tbl.industry_type);
 								this->DrawLegend(text, icon, tbl.show_on_map, GetString(STR_SMALLMAP_INDUSTRY, tbl.legend, count));
 							}
 							break;

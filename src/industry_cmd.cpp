@@ -331,23 +331,43 @@ static IndustryDrawTileProc * const _industry_draw_tile_procs[5] = {
 	IndustryDrawCoalPlantSparks,
 };
 
+/**
+ * Get the display colour for an industry tile, respecting military fog snapshots if active.
+ * @param tile Tile to query
+ * @return Colours enum value
+ */
+Colours GetIndustryTileColour(TileIndex tile)
+{
+	if (ActiveSnapshotScope::IsActive()) {
+		const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshotAtTile(ActiveSnapshotScope::GetCurrentSide(), tile);
+		if (is != nullptr) return is->colour;
+	} else {
+		IndustryID ind_id = GetIndustryIndex(tile);
+		if (Industry::IsValidID(ind_id)) {
+			const Industry *ind = Industry::Get(ind_id);
+			return ind->random_colour;
+		}
+	}
+	return Colours::Grey;
+}
+
+/**
+ * Get the palette ID for an industry tile based on its display colour.
+ * @param tile Tile to query
+ * @return PaletteID to use for rendering
+ */
+PaletteID GetIndustryTilePalette(TileIndex tile)
+{
+	return GetColourPalette(GetIndustryTileColour(tile));
+}
+
 /** @copydoc DrawTileProc */
 static void DrawTile_Industry(TileInfo *ti)
 {
 	IndustryGfx gfx = GetIndustryGfx(ti->tile);
 	IndustryID ind_id = GetIndustryIndex(ti->tile);
-	Industry *ind = nullptr;
-	Colours colour = Colours::Grey;
-
-	if (ActiveSnapshotScope::IsActive()) {
-		const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshotAtTile(ActiveSnapshotScope::GetCurrentSide(), ti->tile);
-		if (is != nullptr) {
-			colour = is->colour;
-		}
-	} else if (Industry::IsValidID(ind_id)) {
-		ind = Industry::Get(ind_id);
-		colour = ind->random_colour;
-	}
+	Industry *ind = (!ActiveSnapshotScope::IsActive() && Industry::IsValidID(ind_id)) ? Industry::Get(ind_id) : nullptr;
+	Colours colour = GetIndustryTileColour(ti->tile);
 
 	const IndustryTileSpec *indts = GetIndustryTileSpec(gfx);
 

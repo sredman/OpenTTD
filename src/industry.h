@@ -298,6 +298,9 @@ void ClearAllIndustryCachedNames();
 
 void PlantRandomFarmField(const Industry *i);
 
+Colours GetIndustryTileColour(TileIndex tile);
+PaletteID GetIndustryTilePalette(TileIndex tile);
+
 void ReleaseDisastersTargetingIndustry(IndustryID);
 
 bool IsTileForestIndustry(TileIndex tile);

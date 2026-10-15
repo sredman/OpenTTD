@@ -3165,7 +3165,7 @@ static bool ConPartialRescoutIndustryA([[maybe_unused]] std::span<std::string_vi
 	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
 		if (v->subtype == ST_MILITARY_AIRCRAFT) {
 			v->UpdatePosition(135 * TILE_SIZE, 100 * TILE_SIZE, GetAircraftFlightLevel(v));
-			v->dest_tile = TileXY(135, 100);
+			v->dest_tile = TileXY(100, 100);
 			v->cur_speed = 0;
 			if (v->Next() != nullptr) v->Next()->UpdatePosition(135 * TILE_SIZE, 100 * TILE_SIZE, 0);
 			break;

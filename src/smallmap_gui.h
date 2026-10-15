@@ -15,6 +15,9 @@
 #include "tile_type.h"
 #include "window_type.h"
 
+#include "industry_type.h"
+#include "gfx_type.h"
+
 /* set up the cargos to be displayed in the smallmap's route legend */
 void BuildLinkStatsLegend();
 
@@ -23,6 +26,10 @@ void ShowSmallMap();
 void ShowSmallMapIndustries();
 void BuildLandLegend();
 void BuildOwnerLegend();
+
+IndustryType GetSmallMapIndustryType(TileIndex tile);
+size_t GetSmallMapIndustryCount(IndustryType type);
+uint32_t GetSmallMapIndustryPixel(TileIndex tile);
 
 /** Enum for how to include the heightmap pixels/colours in small map related functions */
 enum class IncludeHeightmap : uint8_t {

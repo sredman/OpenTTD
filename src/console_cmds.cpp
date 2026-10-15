@@ -48,6 +48,9 @@
 #include "misc_cmd.h"
 #include "disaster_vehicle.h"
 #include "town.h"
+#include "station_base.h"
+#include "station_map.h"
+#include "waypoint_base.h"
 #include "military_fog.h"
 #include "industry.h"
 #include "industry_map.h"
@@ -3284,6 +3287,115 @@ static bool ConRescoutTownA([[maybe_unused]] std::span<std::string_view> argv)
 	return true;
 }
 
+/** Cached station and waypoint IDs for station fixture console commands. */
+static StationID _fixture_station_id{};
+static StationID _fixture_waypoint_id{};
+
+/** Setup station fixture command. @copydoc IConsoleCmdProc */
+static bool ConSetupStationFixture([[maybe_unused]] std::span<std::string_view> argv)
+{
+	TileIndex tile_A = TileXY(138, 100);
+	TileIndex tile_B = TileXY(142, 100);
+
+	MilitaryFog::SetCompanyIntelligenceSide(CompanyID{0}, 0);
+
+	if (Station::CanAllocateItem()) {
+		Station *st_a = Station::Create(tile_A);
+		if (st_a != nullptr) {
+			st_a->name = "Verdun Terminal";
+			st_a->owner = CompanyID{0};
+			st_a->facilities = {StationFacility::Train, StationFacility::BusStop, StationFacility::Dock};
+			st_a->train_station = TileArea(tile_A, 1, 1);
+			st_a->spread = TileArea(tile_A, 1, 1);
+			MakeRailStation(tile_A, CompanyID{0}, st_a->index, Axis::X, 0, RAILTYPE_BEGIN);
+			st_a->UpdateVirtCoord();
+			_fixture_station_id = st_a->index;
+		}
+	}
+
+	if (Waypoint::CanAllocateItem()) {
+		Waypoint *wp_b = Waypoint::Create(tile_B);
+		if (wp_b != nullptr) {
+			wp_b->name = "Meuse Waypoint";
+			wp_b->owner = CompanyID{0};
+			wp_b->facilities = {StationFacility::Waypoint};
+			wp_b->train_station = TileArea(tile_B, 1, 1);
+			wp_b->spread = TileArea(tile_B, 1, 1);
+			MakeRailWaypoint(tile_B, CompanyID{0}, wp_b->index, Axis::X, 0, RAILTYPE_BEGIN);
+			wp_b->UpdateVirtCoord();
+			_fixture_waypoint_id = wp_b->index;
+		}
+	}
+
+	if (!SetupMilitaryScenario()) {
+		IConsolePrint(CC_DEFAULT, "Failed: map must be at least 256x256.");
+		return false;
+	}
+
+	/* Open SmallMap */
+	ShowSmallMap();
+
+	/* Center main window between tile A and tile B */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Station fixture initialized: Station A ('Verdun Terminal') at (138, 100) and Waypoint B ('Meuse Waypoint') at (142, 100), unscouted under fog.");
+	return true;
+}
+
+/** Hide and change station A and waypoint B command. @copydoc IConsoleCmdProc */
+static bool ConHideAndChangeStationA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft far away to (60, 60) so tiles A and B are hidden under fog */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(60 * TILE_SIZE, 60 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(60 * TILE_SIZE, 60 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Modify live Station A and delete Waypoint B while hidden under fog */
+	Station *st = Station::GetIfValid(_fixture_station_id);
+	if (st != nullptr) {
+		st->name = "Verdun Fortress Central";
+		st->facilities = {StationFacility::Train, StationFacility::Airport};
+		st->UpdateVirtCoord();
+	}
+
+	Waypoint *wp = Waypoint::GetIfValid(_fixture_waypoint_id);
+	if (wp != nullptr) {
+		delete wp;
+		MakeClear(TileXY(142, 100), ClearGround::Grass, 0);
+	}
+
+	/* Center main window between tile A and tile B */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Station A modified to 'Verdun Fortress Central' and Waypoint B deleted while hidden under fog.");
+	return true;
+}
+
+/** Rescout station A and waypoint B command. @copydoc IConsoleCmdProc */
+static bool ConRescoutStationA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft to (140, 100) so tiles (138, 100) and (142, 100) are within visibility radius 5 */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Center main window between tile A and tile B */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Station A and Waypoint B re-scouted: Station A updated to 'Verdun Fortress Central', Waypoint B removed.");
+	return true;
+}
+
 /** Schedule command execution after N ticks. @copydoc IConsoleCmdProc */
 static bool ConScheduleTicks(std::span<std::string_view> argv)
 {
@@ -3513,4 +3625,7 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("setup_town_fixture",        ConSetupTownFixture);
 	IConsole::CmdRegister("hide_and_change_town_a",    ConHideAndChangeTownA);
 	IConsole::CmdRegister("rescout_town_a",            ConRescoutTownA);
+	IConsole::CmdRegister("setup_station_fixture",     ConSetupStationFixture);
+	IConsole::CmdRegister("hide_and_change_station_a", ConHideAndChangeStationA);
+	IConsole::CmdRegister("rescout_station_a",         ConRescoutStationA);
 }

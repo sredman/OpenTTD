@@ -22,6 +22,9 @@
 #include "table/strings.h"
 #include "landscape.h"
 #include "settings_type.h"
+#include "station_base.h"
+#include "waypoint_base.h"
+#include "station_map.h"
 #include <algorithm>
 #include "core/format.hpp"
 #include "safeguards.h"
@@ -108,19 +111,81 @@ void TownSnapshot::UpdateVirtCoord()
 	}
 }
 
+/**
+ * Get safe cached name of a station or waypoint without triggering unloaded string table assertion in headless/test environments.
+ * @param st The base station to query.
+ * @return The cached station name, or empty string.
+ */
+static std::string GetSafeStationName(const BaseStation *st)
+{
+	if (st == nullptr) return "";
+	if (!st->cached_name.empty()) return st->cached_name;
+	if (!st->name.empty()) return st->name;
+	if (_current_language != nullptr) {
+		return st->GetCachedName();
+	}
+	return st->name;
+}
+
+std::string StationSnapshot::GetViewportString(bool small) const
+{
+	if (small || this->is_waypoint) {
+		return this->name;
+	}
+
+	bool has_icons = this->facilities.Any({StationFacility::Train, StationFacility::TruckStop, StationFacility::BusStop, StationFacility::Dock, StationFacility::Airport});
+	if (!has_icons) {
+		return this->name;
+	}
+
+	std::string res = this->name;
+	StringBuilder sb(res);
+	sb += " ";
+	if (this->facilities.Test(StationFacility::Train)) sb.PutUtf8(SCC_TRAIN);
+	if (this->facilities.Test(StationFacility::TruckStop)) sb.PutUtf8(SCC_LORRY);
+	if (this->facilities.Test(StationFacility::BusStop)) sb.PutUtf8(SCC_BUS);
+	if (this->facilities.Test(StationFacility::Dock)) sb.PutUtf8(SCC_SHIP);
+	if (this->facilities.Test(StationFacility::Airport)) sb.PutUtf8(SCC_PLANE);
+	return res;
+}
+
+void StationSnapshot::UpdateVirtCoord()
+{
+	if (!this->exists || !IsValidTile(this->xy)) return;
+
+	Point pt = RemapCoords2(TileX(this->xy) * TILE_SIZE, TileY(this->xy) * TILE_SIZE);
+	pt.y -= 32 * ZOOM_BASE;
+	if (this->is_oilrig) pt.y -= 16 * ZOOM_BASE;
+
+	std::string str_normal = this->GetViewportString(false);
+	std::string str_small = this->GetViewportString(true);
+
+	if (_current_language != nullptr) {
+		this->sign.UpdatePosition(pt.x, pt.y, str_normal, str_small);
+	} else {
+		this->sign.center = pt.x;
+		this->sign.top = pt.y;
+		this->sign.width_normal = static_cast<uint16_t>(std::max<size_t>(str_normal.size() * 8, 40));
+		this->sign.width_small = static_cast<uint16_t>(std::max<size_t>(str_small.size() * 6, 20));
+	}
+}
 
 void SideIntelligence::Allocate(size_t map_size)
 {
 	this->is_scouted.assign(map_size, 0);
 	this->currently_visible.assign(map_size, 0);
 	this->tile_to_industry_handle.assign(map_size, 0);
+	this->tile_to_station_handle.assign(map_size, 0);
 	this->base_tiles = std::make_unique<Tile::TileBase[]>(map_size);
 	this->extended_tiles = std::make_unique<Tile::TileExtended[]>(map_size);
 	this->town_snapshots.clear();
+	this->station_snapshots.clear();
 	this->industry_snapshots.clear();
 	this->contacts.clear();
 	this->never_scouted_count = static_cast<uint32_t>(map_size);
 	this->next_industry_handle = 1;
+	this->next_town_handle = 1;
+	this->next_station_handle = 1;
 }
 
 void SideIntelligence::Reset()
@@ -128,13 +193,17 @@ void SideIntelligence::Reset()
 	this->is_scouted.clear();
 	this->currently_visible.clear();
 	this->tile_to_industry_handle.clear();
+	this->tile_to_station_handle.clear();
 	this->base_tiles.reset();
 	this->extended_tiles.reset();
 	this->town_snapshots.clear();
+	this->station_snapshots.clear();
 	this->industry_snapshots.clear();
 	this->contacts.clear();
 	this->never_scouted_count = 0;
 	this->next_industry_handle = 1;
+	this->next_town_handle = 1;
+	this->next_station_handle = 1;
 }
 
 bool MilitaryFog::IsActive()
@@ -214,6 +283,40 @@ void MilitaryFog::Initialize()
 			}
 			_side_intelligence[s].industry_snapshots.push_back(std::move(is));
 		}
+
+		/* Snapshot starting stations and waypoints with location-anchored handles and footprint tiles */
+		_side_intelligence[s].station_snapshots.clear();
+		uint32_t station_h = 1;
+		for (const BaseStation *st : BaseStation::Iterate()) {
+			uint32_t handle = station_h++;
+			StationSnapshot ss;
+			ss.handle = handle;
+			ss.original_id = st->index;
+			ss.is_waypoint = !Station::IsExpected(st);
+			if (Station::IsExpected(st)) {
+				const Station *station = Station::From(st);
+				ss.is_oilrig = station->facilities.Test(StationFacility::Airport) && station->airport.type == AT_OILRIG;
+			}
+			ss.xy = st->xy;
+			ss.name = GetSafeStationName(st);
+			ss.facilities = st->facilities;
+			ss.owner = st->owner;
+			ss.exists = true;
+
+			for (TileIndex cur_tile : st->spread) {
+				if (IsTileType(cur_tile, TileType::Station) && GetStationIndex(cur_tile) == st->index) {
+					ss.observed_tiles.push_back(cur_tile);
+					_side_intelligence[s].tile_to_station_handle[cur_tile.base()] = handle;
+				}
+			}
+			if (std::find(ss.observed_tiles.begin(), ss.observed_tiles.end(), st->xy) == ss.observed_tiles.end() && IsValidTile(st->xy)) {
+				ss.observed_tiles.push_back(st->xy);
+				_side_intelligence[s].tile_to_station_handle[st->xy.base()] = handle;
+			}
+			ss.UpdateVirtCoord();
+			_side_intelligence[s].station_snapshots.push_back(std::move(ss));
+		}
+		_side_intelligence[s].next_station_handle = station_h;
 
 		/* All tiles begin under fog of war as never-scouted */
 		_side_intelligence[s].never_scouted_count = static_cast<uint32_t>(map_size);
@@ -479,6 +582,105 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 		if (prev_handle != 0) {
 			intel.tile_to_industry_handle[tile.base()] = 0;
 			for (auto &existing : intel.industry_snapshots) {
+				if (existing.handle == prev_handle) {
+					auto it = std::find(existing.observed_tiles.begin(), existing.observed_tiles.end(), tile);
+					if (it != existing.observed_tiles.end()) {
+						existing.observed_tiles.erase(it);
+					}
+					if (existing.observed_tiles.empty()) {
+						existing.exists = false;
+					}
+					break;
+				}
+			}
+		}
+	}
+
+	/* Refresh station snapshot if tile belongs to a station or waypoint */
+	if (IsTileType(tile, TileType::Station)) {
+		StationID sid = GetStationIndex(tile);
+		const BaseStation *st = BaseStation::GetIfValid(sid);
+		if (st != nullptr) {
+			TileIndex sign_xy = st->xy;
+			bool is_wp = !Station::IsExpected(st);
+			bool is_rig = false;
+			if (Station::IsExpected(st)) {
+				const Station *station = Station::From(st);
+				is_rig = station->facilities.Test(StationFacility::Airport) && station->airport.type == AT_OILRIG;
+			}
+			std::string st_name = GetSafeStationName(st);
+			Owner st_owner = st->owner;
+			StationFacilities st_facilities = st->facilities;
+
+			uint32_t prev_handle = (tile.base() < intel.tile_to_station_handle.size()) ? intel.tile_to_station_handle[tile.base()] : 0;
+			StationSnapshot *prev_snap = (prev_handle != 0) ? const_cast<StationSnapshot *>(GetStationSnapshotByHandle(side, prev_handle)) : nullptr;
+
+			/* If previous snapshot matches current live station at sign_xy, update it */
+			if (prev_snap != nullptr && prev_snap->xy == sign_xy && prev_snap->is_waypoint == is_wp &&
+					prev_snap->owner == st_owner) {
+				prev_snap->name = st_name;
+				prev_snap->facilities = st_facilities;
+				prev_snap->is_oilrig = is_rig;
+				if (std::find(prev_snap->observed_tiles.begin(), prev_snap->observed_tiles.end(), tile) == prev_snap->observed_tiles.end()) {
+					prev_snap->observed_tiles.push_back(tile);
+				}
+				if (tile.base() < intel.tile_to_station_handle.size()) {
+					intel.tile_to_station_handle[tile.base()] = prev_snap->handle;
+				}
+				prev_snap->UpdateVirtCoord();
+			} else {
+				/* Tile changed or is new: detach tile from previous snapshot without mutating remaining hidden tiles */
+				if (prev_snap != nullptr) {
+					auto it = std::find(prev_snap->observed_tiles.begin(), prev_snap->observed_tiles.end(), tile);
+					if (it != prev_snap->observed_tiles.end()) {
+						prev_snap->observed_tiles.erase(it);
+					}
+					if (prev_snap->observed_tiles.empty()) {
+						prev_snap->exists = false;
+					}
+				}
+				prev_snap = nullptr; // Raw pointer must not be accessed across potential vector growth
+
+				/* Find if an existing active snapshot already represents this live station at sign_xy */
+				StationSnapshot *snap = nullptr;
+				for (auto &existing : intel.station_snapshots) {
+					if (existing.exists && existing.xy == sign_xy && existing.is_waypoint == is_wp &&
+							existing.owner == st_owner) {
+						snap = &existing;
+						break;
+					}
+				}
+				if (snap == nullptr) {
+					uint32_t handle = intel.next_station_handle++;
+					intel.station_snapshots.emplace_back();
+					snap = &intel.station_snapshots.back();
+					snap->handle = handle;
+					snap->original_id = sid;
+					snap->is_waypoint = is_wp;
+					snap->xy = sign_xy;
+					snap->name = st_name;
+					snap->owner = st_owner;
+				}
+				snap->name = st_name;
+				snap->facilities = st_facilities;
+				snap->is_oilrig = is_rig;
+				snap->exists = true;
+
+				if (std::find(snap->observed_tiles.begin(), snap->observed_tiles.end(), tile) == snap->observed_tiles.end()) {
+					snap->observed_tiles.push_back(tile);
+				}
+				if (tile.base() < intel.tile_to_station_handle.size()) {
+					intel.tile_to_station_handle[tile.base()] = snap->handle;
+				}
+				snap->UpdateVirtCoord();
+			}
+		}
+	} else {
+		/* Tile is no longer a station or waypoint */
+		uint32_t prev_handle = (tile.base() < intel.tile_to_station_handle.size()) ? intel.tile_to_station_handle[tile.base()] : 0;
+		if (prev_handle != 0) {
+			intel.tile_to_station_handle[tile.base()] = 0;
+			for (auto &existing : intel.station_snapshots) {
 				if (existing.handle == prev_handle) {
 					auto it = std::find(existing.observed_tiles.begin(), existing.observed_tiles.end(), tile);
 					if (it != existing.observed_tiles.end()) {
@@ -817,6 +1019,39 @@ void MilitaryFog::UpdateAllTownSnapshotVirtCoords()
 	}
 }
 
+const StationSnapshot *MilitaryFog::GetStationSnapshotByHandle(uint8_t side, uint32_t handle)
+{
+	if (!_military_fog_active || side >= MAX_MILITARY_SIDES || handle == 0) return nullptr;
+	const auto &snaps = _side_intelligence[side].station_snapshots;
+	for (const auto &ss : snaps) {
+		if (ss.exists && ss.handle == handle) return &ss;
+	}
+	return nullptr;
+}
+
+const StationSnapshot *MilitaryFog::GetStationSnapshotAtTile(uint8_t side, TileIndex tile)
+{
+	if (!_military_fog_active || side >= MAX_MILITARY_SIDES || !IsValidTile(tile)) return nullptr;
+	const auto &intel = _side_intelligence[side];
+	if (tile.base() < intel.tile_to_station_handle.size()) {
+		uint32_t handle = intel.tile_to_station_handle[tile.base()];
+		if (handle != 0) return GetStationSnapshotByHandle(side, handle);
+	}
+	for (const auto &ss : intel.station_snapshots) {
+		if (ss.exists && ss.xy == tile) return &ss;
+	}
+	return nullptr;
+}
+
+const StationSnapshot *MilitaryFog::GetStationSnapshot(uint8_t side, StationID station)
+{
+	if (!_military_fog_active || side >= MAX_MILITARY_SIDES) return nullptr;
+	for (const auto &ss : _side_intelligence[side].station_snapshots) {
+		if (ss.exists && ss.original_id == station) return &ss;
+	}
+	return nullptr;
+}
+
 const IndustrySnapshot *MilitaryFog::GetIndustrySnapshotAtTile(uint8_t side, TileIndex tile)
 {
 	if (!_military_fog_active || side >= MAX_MILITARY_SIDES) return nullptr;
@@ -1103,6 +1338,61 @@ void MilitaryFog::Save()
 				}
 			}
 		}
+
+		/* Save station_snapshots */
+		SlWriteByte(GB(intel.next_station_handle, 24, 8));
+		SlWriteByte(GB(intel.next_station_handle, 16, 8));
+		SlWriteByte(GB(intel.next_station_handle, 8, 8));
+		SlWriteByte(GB(intel.next_station_handle, 0, 8));
+
+		uint32_t num_st = static_cast<uint32_t>(intel.station_snapshots.size());
+		SlWriteByte(GB(num_st, 24, 8));
+		SlWriteByte(GB(num_st, 16, 8));
+		SlWriteByte(GB(num_st, 8, 8));
+		SlWriteByte(GB(num_st, 0, 8));
+		for (const auto &ss : intel.station_snapshots) {
+			SlWriteByte(ss.exists ? 1 : 0);
+			if (ss.exists) {
+				SlWriteByte(GB(ss.handle, 24, 8));
+				SlWriteByte(GB(ss.handle, 16, 8));
+				SlWriteByte(GB(ss.handle, 8, 8));
+				SlWriteByte(GB(ss.handle, 0, 8));
+
+				uint16_t orig_id = ss.original_id.base();
+				SlWriteByte(GB(orig_id, 8, 8));
+				SlWriteByte(GB(orig_id, 0, 8));
+
+				SlWriteByte(ss.is_waypoint ? 1 : 0);
+				SlWriteByte(ss.is_oilrig ? 1 : 0);
+
+				SlWriteByte(GB(ss.xy.base(), 24, 8));
+				SlWriteByte(GB(ss.xy.base(), 16, 8));
+				SlWriteByte(GB(ss.xy.base(), 8, 8));
+				SlWriteByte(GB(ss.xy.base(), 0, 8));
+
+				SlWriteByte(ss.owner.base());
+				SlWriteByte(ss.facilities.base());
+
+				uint16_t name_len = static_cast<uint16_t>(ss.name.size());
+				SlWriteByte(GB(name_len, 8, 8));
+				SlWriteByte(GB(name_len, 0, 8));
+				for (char ch : ss.name) {
+					SlWriteByte(static_cast<uint8_t>(ch));
+				}
+
+				uint32_t num_observed = static_cast<uint32_t>(ss.observed_tiles.size());
+				SlWriteByte(GB(num_observed, 24, 8));
+				SlWriteByte(GB(num_observed, 16, 8));
+				SlWriteByte(GB(num_observed, 8, 8));
+				SlWriteByte(GB(num_observed, 0, 8));
+				for (TileIndex t : ss.observed_tiles) {
+					SlWriteByte(GB(t.base(), 24, 8));
+					SlWriteByte(GB(t.base(), 16, 8));
+					SlWriteByte(GB(t.base(), 8, 8));
+					SlWriteByte(GB(t.base(), 0, 8));
+				}
+			}
+		}
 	}
 }
 
@@ -1312,6 +1602,81 @@ void MilitaryFog::Load()
 				}
 			}
 		}
+
+		/* Load station_snapshots */
+		uint32_t next_st_h = (static_cast<uint32_t>(SlReadByte()) << 24);
+		next_st_h |= (static_cast<uint32_t>(SlReadByte()) << 16);
+		next_st_h |= (static_cast<uint32_t>(SlReadByte()) << 8);
+		next_st_h |= static_cast<uint32_t>(SlReadByte());
+		intel.next_station_handle = next_st_h;
+
+		uint32_t num_st = (static_cast<uint32_t>(SlReadByte()) << 24);
+		num_st |= (static_cast<uint32_t>(SlReadByte()) << 16);
+		num_st |= (static_cast<uint32_t>(SlReadByte()) << 8);
+		num_st |= static_cast<uint32_t>(SlReadByte());
+		intel.station_snapshots.resize(num_st);
+		for (uint32_t j = 0; j < num_st; j++) {
+			StationSnapshot &ss = intel.station_snapshots[j];
+			ss.exists = (SlReadByte() != 0);
+			if (ss.exists) {
+				uint32_t h = (static_cast<uint32_t>(SlReadByte()) << 24);
+				h |= (static_cast<uint32_t>(SlReadByte()) << 16);
+				h |= (static_cast<uint32_t>(SlReadByte()) << 8);
+				h |= static_cast<uint32_t>(SlReadByte());
+				ss.handle = h;
+
+				uint16_t orig_id = (static_cast<uint16_t>(SlReadByte()) << 8);
+				orig_id |= static_cast<uint16_t>(SlReadByte());
+				ss.original_id = StationID{orig_id};
+
+				ss.is_waypoint = (SlReadByte() != 0);
+				ss.is_oilrig = (SlReadByte() != 0);
+
+				uint32_t xy = (static_cast<uint32_t>(SlReadByte()) << 24);
+				xy |= (static_cast<uint32_t>(SlReadByte()) << 16);
+				xy |= (static_cast<uint32_t>(SlReadByte()) << 8);
+				xy |= static_cast<uint32_t>(SlReadByte());
+				ss.xy = TileIndex{xy};
+
+				ss.owner = Owner{SlReadByte()};
+				ss.facilities = static_cast<StationFacilities>(SlReadByte());
+
+				uint16_t name_len = (static_cast<uint16_t>(SlReadByte()) << 8);
+				name_len |= static_cast<uint16_t>(SlReadByte());
+				ss.name.resize(name_len);
+				for (uint16_t k = 0; k < name_len; k++) {
+					ss.name[k] = static_cast<char>(SlReadByte());
+				}
+
+				uint32_t num_observed = (static_cast<uint32_t>(SlReadByte()) << 24);
+				num_observed |= (static_cast<uint32_t>(SlReadByte()) << 16);
+				num_observed |= (static_cast<uint32_t>(SlReadByte()) << 8);
+				num_observed |= static_cast<uint32_t>(SlReadByte());
+				ss.observed_tiles.resize(num_observed);
+				for (uint32_t ot = 0; ot < num_observed; ot++) {
+					uint32_t t = (static_cast<uint32_t>(SlReadByte()) << 24);
+					t |= (static_cast<uint32_t>(SlReadByte()) << 16);
+					t |= (static_cast<uint32_t>(SlReadByte()) << 8);
+					t |= static_cast<uint32_t>(SlReadByte());
+					ss.observed_tiles[ot] = TileIndex{t};
+				}
+				ss.UpdateVirtCoord();
+			} else {
+				ss = StationSnapshot{};
+			}
+		}
+
+		/* Reconstruct tile_to_station_handle from snapshots */
+		intel.tile_to_station_handle.assign(map_size, 0);
+		for (const auto &ss : intel.station_snapshots) {
+			if (ss.exists) {
+				for (TileIndex t : ss.observed_tiles) {
+					if (t.base() < map_size) {
+						intel.tile_to_station_handle[t.base()] = ss.handle;
+					}
+				}
+			}
+		}
 	}
 
 	ReconstructVisibility(false);
@@ -1350,6 +1715,15 @@ struct MFOGChunkHandler : ChunkHandler {
 					len += 1; // exists
 					if (is.exists) {
 						len += 4 + 1 + 4 + 1 + 1 + 1 + 2 + is.name.size() + 4 + is.observed_tiles.size() * 4;
+					}
+				}
+
+				len += 4; // next_station_handle
+				len += 4; // num_stations
+				for (const auto &ss : intel.station_snapshots) {
+					len += 1; // exists
+					if (ss.exists) {
+						len += 4 + 2 + 1 + 1 + 4 + 1 + 1 + 2 + ss.name.size() + 4 + ss.observed_tiles.size() * 4;
 					}
 				}
 			}

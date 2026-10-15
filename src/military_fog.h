@@ -15,6 +15,7 @@
 #include "company_base.h"
 #include "town.h"
 #include "industry.h"
+#include "station_type.h"
 #include <vector>
 #include <string>
 #include <memory>
@@ -57,6 +58,33 @@ struct TownSnapshot {
 	std::string GetViewportString(bool small) const;
 };
 
+/** Stored stationary snapshot of a station or waypoint. */
+struct StationSnapshot {
+	uint32_t handle = 0;                          ///< Unique side-local stationary snapshot handle.
+	StationID original_id = StationID::Invalid();  ///< Station ID when observed.
+	bool is_waypoint = false;                     ///< True if waypoint, false if station.
+	bool is_oilrig = false;                       ///< True if oil rig station (offset sign).
+	TileIndex xy = INVALID_TILE;                  ///< Station sign tile location.
+	std::string name{};                           ///< Last-observed station or waypoint name.
+	StationFacilities facilities{};               ///< Last-observed station facilities.
+	Owner owner = INVALID_OWNER;                  ///< Station owner company.
+	bool exists = false;                          ///< Whether the station existed when last observed.
+	ViewportSign sign{};                          ///< Viewport sign coordinates and dimensions.
+	std::vector<TileIndex> observed_tiles{};      ///< Observed footprint tiles belonging to this snapshot.
+
+	/**
+	 * Recompute and update viewport sign coordinates and dimensions for this station snapshot.
+	 */
+	void UpdateVirtCoord();
+
+	/**
+	 * Get the viewport label string for this station snapshot.
+	 * @param small Whether to return the concise label (true) or full label with facility icons (false).
+	 * @return Formatted label string.
+	 */
+	std::string GetViewportString(bool small) const;
+};
+
 /** Stored stationary snapshot of an industry. */
 struct IndustrySnapshot {
 	uint32_t handle = 0;               ///< Unique side-local stationary snapshot handle.
@@ -85,14 +113,17 @@ struct SideIntelligence {
 	std::vector<uint8_t> is_scouted;                      ///< 1 if explored at least once, 0 if never scouted.
 	std::vector<uint8_t> currently_visible;               ///< 1 if currently in scouting radius, 0 otherwise.
 	std::vector<uint32_t> tile_to_industry_handle;        ///< Map from TileIndex.base() to snapshot handle (0 = none).
+	std::vector<uint32_t> tile_to_station_handle;         ///< Map from TileIndex.base() to station snapshot handle (0 = none).
 	std::unique_ptr<Tile::TileBase[]> base_tiles;         ///< Stationary snapshot of TileBase data.
 	std::unique_ptr<Tile::TileExtended[]> extended_tiles; ///< Stationary snapshot of TileExtended data.
 	std::vector<TownSnapshot> town_snapshots;             ///< Snapshots of towns indexed by TownID.
+	std::vector<StationSnapshot> station_snapshots;       ///< Snapshots of stations and waypoints known to this side.
 	std::vector<IndustrySnapshot> industry_snapshots;     ///< Snapshots of industries known to this side.
 	std::vector<MilitaryContact> contacts;                ///< Known enemy contacts.
 	uint32_t never_scouted_count = 0;                     ///< Count of never-scouted tiles.
 	uint32_t next_industry_handle = 1;                    ///< Next stationary handle to allocate.
 	uint32_t next_town_handle = 1;                        ///< Next stationary town handle to allocate.
+	uint32_t next_station_handle = 1;                     ///< Next stationary station handle to allocate.
 
 	/**
 	 * Allocate memory structures for a given map size.
@@ -282,6 +313,30 @@ public:
 	 * Update sign coordinates and dimensions for all town snapshots across all sides.
 	 */
 	static void UpdateAllTownSnapshotVirtCoords();
+
+	/**
+	 * Get stored snapshot of a station or waypoint for a specific side by stationary handle.
+	 * @param side Side index.
+	 * @param handle Stationary station handle.
+	 * @return Pointer to snapshot, or nullptr if not available.
+	 */
+	static const StationSnapshot *GetStationSnapshotByHandle(uint8_t side, uint32_t handle);
+
+	/**
+	 * Get stored snapshot of a station or waypoint for a specific side by tile location.
+	 * @param side Side index.
+	 * @param tile Tile located within station footprint or at sign location.
+	 * @return Pointer to snapshot, or nullptr if not available.
+	 */
+	static const StationSnapshot *GetStationSnapshotAtTile(uint8_t side, TileIndex tile);
+
+	/**
+	 * Get stored snapshot of a station or waypoint for a specific side by original ID.
+	 * @param side Side index.
+	 * @param station Station ID.
+	 * @return Pointer to snapshot, or nullptr if not available.
+	 */
+	static const StationSnapshot *GetStationSnapshot(uint8_t side, StationID station);
 
 	/**
 	 * Get stored snapshot of an industry for a specific side by tile location.

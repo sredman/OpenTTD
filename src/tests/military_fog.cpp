@@ -27,6 +27,12 @@
 #include "../company_func.h"
 #include "../company_manager_face.h"
 #include "../object_base.h"
+#include "../station_base.h"
+#include "../waypoint_base.h"
+#include "../station_map.h"
+#include "../direction_type.h"
+#include "../core/string_builder.hpp"
+#include "../table/control_codes.h"
 
 #include "../network/network.h"
 #include "../saveload/saveload_func.h"
@@ -63,7 +69,9 @@ static void ResetFogTestEnvironment()
 		_valid_searchpaths.push_back(Searchpath::WorkingDir);
 	}
 	_vehicle_pool.CleanPool();
+	_company_pool.CleanPool();
 	_town_pool.CleanPool();
+	_station_pool.CleanPool();
 	_industry_pool.CleanPool();
 	_object_pool.CleanPool();
 	ResetIndustries();
@@ -2634,6 +2642,400 @@ TEST_CASE("MilitaryFog - Town snapshot save/load persistence and continuation eq
 	MakeClear(tile_C + TileDiffXY(1, 0), ClearGround::Grass, 0);
 	RebuildTownCaches();
 	delete loaded_town_C;
+
+	ResetFogTestEnvironment();
+}
+
+TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persistence, and continuation")
+{
+	ResetFogTestEnvironment();
+	extern void InitializeLanguagePacks();
+	InitializeLanguagePacks();
+	FontCache *fc_norm = FontCache::Get(FontSize::Normal);
+	FontCache *fc_small = FontCache::Get(FontSize::Small);
+	REQUIRE(fc_norm != nullptr);
+	REQUIRE(fc_small != nullptr);
+	CHECK(fc_norm->GetFontName() == "mock");
+	CHECK(fc_small->GetFontName() == "mock");
+	LoadStringWidthTable();
+	extern void SetupWidgetDimensions();
+	SetupWidgetDimensions();
+
+	/* Setup companies for side affiliation */
+	Company *c1 = Company::CreateAtIndex(CompanyID{0});
+	Company *c2 = Company::CreateAtIndex(CompanyID{1});
+	REQUIRE(c1 != nullptr);
+	REQUIRE(c2 != nullptr);
+
+	uint8_t side0 = 0;
+	uint8_t side1 = 1;
+	MilitaryFog::SetCompanyIntelligenceSide(CompanyID{0}, side0);
+	MilitaryFog::SetCompanyIntelligenceSide(CompanyID{1}, side1);
+
+	TileIndex tile_A = TileXY(10, 10);
+	TileIndex tile_B = TileXY(20, 20);
+	TileIndex tile_C = TileXY(30, 30);
+	TileIndex tile_dummy = TileXY(40, 40);
+
+	/* Create Station A at tile_A with Train and TruckStop facilities */
+	REQUIRE(Station::CanAllocateItem());
+	Station *st_A = Station::CreateAtIndex(StationID{0}, tile_A);
+	REQUIRE(st_A != nullptr);
+	st_A->name = "Verdun Rail Depot";
+	st_A->owner = CompanyID{0};
+	st_A->facilities = {StationFacility::Train, StationFacility::TruckStop};
+	MakeRailStation(tile_A, CompanyID{0}, st_A->index, Axis::X, 0, RAILTYPE_BEGIN);
+	st_A->spread = TileArea(tile_A, 1, 1);
+	st_A->train_station = TileArea(tile_A, 1, 1);
+	st_A->UpdateVirtCoord();
+
+	/* Create Waypoint B at tile_B */
+	REQUIRE(Waypoint::CanAllocateItem());
+	Waypoint *wp_B = Waypoint::CreateAtIndex(StationID{1}, tile_B);
+	REQUIRE(wp_B != nullptr);
+	wp_B->name = "Meuse Waypoint";
+	wp_B->owner = CompanyID{0};
+	wp_B->facilities = {StationFacility::Waypoint};
+	MakeStation(tile_B, CompanyID{0}, wp_B->index, StationType::RailWaypoint, 0);
+	wp_B->spread = TileArea(tile_B, 1, 1);
+	wp_B->UpdateVirtCoord();
+
+	/* Initialize military fog of war */
+	MilitaryFog::Initialize();
+	REQUIRE(MilitaryFog::IsActive());
+
+	/* Initial knowledge: both sides know starting Station A and Waypoint B */
+	const auto &intel0 = MilitaryFog::GetSideIntelligence(side0);
+	const auto &intel1 = MilitaryFog::GetSideIntelligence(side1);
+
+	/* Tiles start never-scouted under fog (signs exist without counting as explored) */
+	CHECK(intel0.never_scouted_count == Map::Size());
+	CHECK(intel0.is_scouted[tile_A.base()] == 0);
+	CHECK(intel0.is_scouted[tile_B.base()] == 0);
+	CHECK(intel1.never_scouted_count == Map::Size());
+	CHECK(intel1.is_scouted[tile_A.base()] == 0);
+	CHECK(intel1.is_scouted[tile_B.base()] == 0);
+
+	/* Next station handle starts at 3 after populating handles 1 and 2 */
+	CHECK(intel0.next_station_handle == 3);
+	CHECK(intel1.next_station_handle == 3);
+
+	const StationSnapshot *init_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A);
+	const StationSnapshot *init_B0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_B);
+	const StationSnapshot *init_A1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_A);
+	const StationSnapshot *init_B1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
+	REQUIRE(init_A0 != nullptr);
+	REQUIRE(init_B0 != nullptr);
+	REQUIRE(init_A1 != nullptr);
+	REQUIRE(init_B1 != nullptr);
+
+	/* Station A attributes */
+	CHECK(init_A0->handle == 1);
+	CHECK(init_A0->original_id == StationID{0});
+	CHECK_FALSE(init_A0->is_waypoint);
+	CHECK(init_A0->name == "Verdun Rail Depot");
+	CHECK(init_A0->facilities.Test(StationFacility::Train));
+	CHECK(init_A0->facilities.Test(StationFacility::TruckStop));
+	CHECK_FALSE(init_A0->facilities.Test(StationFacility::BusStop));
+
+	/* Waypoint B attributes */
+	CHECK(init_B0->handle == 2);
+	CHECK(init_B0->original_id == StationID{1});
+	CHECK(init_B0->is_waypoint);
+	CHECK(init_B0->name == "Meuse Waypoint");
+
+	/* String formatting: Station A has icons when !small, concise name when small */
+	std::string expected_A_main = "Verdun Rail Depot";
+	{
+		StringBuilder sb(expected_A_main);
+		sb += " ";
+		sb.PutUtf8(SCC_TRAIN);
+		sb.PutUtf8(SCC_LORRY);
+	}
+	CHECK(init_A0->GetViewportString(false) == expected_A_main);
+	CHECK(init_A0->GetViewportString(true) == "Verdun Rail Depot");
+
+	/* Waypoint B has no facility icons in main or small */
+	CHECK(init_B0->GetViewportString(false) == "Meuse Waypoint");
+	CHECK(init_B0->GetViewportString(true) == "Meuse Waypoint");
+
+	/* Both sides match initially */
+	CHECK(init_A0->GetViewportString(false) == init_A1->GetViewportString(false));
+	CHECK(init_B0->GetViewportString(false) == init_B1->GetViewportString(false));
+
+	/* --- Hidden modifications under fog --- */
+	/* 1. Side 1 discovers Station A expansion to "Verdun Terminal" with BusStop */
+	st_A->name = "Verdun Terminal";
+	st_A->facilities.Set(StationFacility::BusStop);
+	st_A->UpdateVirtCoord();
+	MilitaryFog::RefreshStationarySnapshot(side1, tile_A);
+
+	/* 2. Waypoint B demolished under fog */
+	StationID id_B = wp_B->index;
+	MakeClear(tile_B, ClearGround::Grass, 0);
+	delete wp_B;
+	wp_B = nullptr;
+
+	/* Under fog: Side 0 still holds stale Station A ("Verdun Rail Depot") and stale Waypoint B ("Meuse Waypoint") */
+	const StationSnapshot *stale_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A);
+	const StationSnapshot *stale_B0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_B);
+	REQUIRE(stale_A0 != nullptr);
+	REQUIRE(stale_B0 != nullptr);
+	CHECK(stale_A0->name == "Verdun Rail Depot");
+	CHECK_FALSE(stale_A0->facilities.Test(StationFacility::BusStop));
+	CHECK(stale_B0->exists);
+	CHECK(stale_B0->name == "Meuse Waypoint");
+
+	/* Side 1 has updated Station A, but STILL retains stale Waypoint B under fog */
+	const StationSnapshot *fresh_A1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_A);
+	const StationSnapshot *stale_B1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
+	REQUIRE(fresh_A1 != nullptr);
+	REQUIRE(stale_B1 != nullptr);
+	CHECK(fresh_A1->name == "Verdun Terminal");
+	CHECK(fresh_A1->facilities.Test(StationFacility::BusStop));
+	CHECK(stale_B1->exists);
+	CHECK(stale_B1->name == "Meuse Waypoint");
+
+	/* Save state before continuation */
+	SaveLoadResult save_res = SaveOrLoad("test_station_labels_continuation.sav", SaveLoadOperation::Save, DetailedFileType::GameFile, Subdirectory::None, false);
+	REQUIRE(save_res == SaveLoadResult::Ok);
+
+	/* --- PATH 1: Uninterrupted continuation --- */
+	/* Pre-continuation values */
+	std::string unint_pre_main_A0 = stale_A0->GetViewportString(false);
+	std::string unint_pre_mini_A0 = stale_A0->GetViewportString(true);
+	uint16_t unint_pre_w_norm_A0  = stale_A0->sign.width_normal;
+	uint16_t unint_pre_w_small_A0 = stale_A0->sign.width_small;
+
+	std::string unint_pre_main_A1 = fresh_A1->GetViewportString(false);
+	std::string unint_pre_mini_A1 = fresh_A1->GetViewportString(true);
+	uint16_t unint_pre_w_norm_A1  = fresh_A1->sign.width_normal;
+	uint16_t unint_pre_w_small_A1 = fresh_A1->sign.width_small;
+
+	std::string unint_pre_main_B0 = stale_B0->GetViewportString(false);
+	std::string unint_pre_mini_B0 = stale_B0->GetViewportString(true);
+	uint16_t unint_pre_w_norm_B0  = stale_B0->sign.width_normal;
+	uint16_t unint_pre_w_small_B0 = stale_B0->sign.width_small;
+
+	std::string unint_pre_main_B1 = stale_B1->GetViewportString(false);
+	std::string unint_pre_mini_B1 = stale_B1->GetViewportString(true);
+	uint16_t unint_pre_w_norm_B1  = stale_B1->sign.width_normal;
+	uint16_t unint_pre_w_small_B1 = stale_B1->sign.width_small;
+
+	/* Continuation Step 1: Side 0 scouts tile_A -> discovers "Verdun Terminal" with BusStop */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A);
+	const StationSnapshot *unint_step1_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A);
+	REQUIRE(unint_step1_A0 != nullptr);
+	std::string unint_step1_main_A0 = unint_step1_A0->GetViewportString(false);
+	std::string unint_step1_mini_A0 = unint_step1_A0->GetViewportString(true);
+	uint16_t unint_step1_w_norm_A0  = unint_step1_A0->sign.width_normal;
+	uint16_t unint_step1_w_small_A0 = unint_step1_A0->sign.width_small;
+	uint32_t unint_step1_h_A0       = unint_step1_A0->handle;
+
+	CHECK(unint_step1_h_A0 == 1);
+	CHECK(unint_step1_mini_A0 == "Verdun Terminal");
+	CHECK(unint_step1_A0->facilities.Test(StationFacility::BusStop));
+
+	/* Continuation Step 2: Side 0 scouts tile_B -> discovers demolition */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_B);
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side0, tile_B) == nullptr);
+
+	/* Unobserving side 1 retains stale Waypoint B */
+	const StationSnapshot *unint_step2_B1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
+	REQUIRE(unint_step2_B1 != nullptr);
+	CHECK(unint_step2_B1->handle == 2);
+	CHECK(unint_step2_B1->exists);
+	CHECK(unint_step2_B1->name == "Meuse Waypoint");
+
+	/* Continuation Step 3: Station C created reusing StationID 1 at tile_C */
+	REQUIRE(Station::CanAllocateItem());
+	Station *st_C = Station::CreateAtIndex(id_B, tile_C);
+	REQUIRE(st_C != nullptr);
+	st_C->name = "Sedan Junction";
+	st_C->owner = CompanyID{1};
+	st_C->facilities = {StationFacility::Train, StationFacility::Dock};
+	MakeRailStation(tile_C, CompanyID{1}, st_C->index, Axis::X, 0, RAILTYPE_BEGIN);
+	st_C->spread = TileArea(tile_C, 1, 1);
+	st_C->train_station = TileArea(tile_C, 1, 1);
+	st_C->UpdateVirtCoord();
+
+	/* Side 0 scouts tile_C -> discovers Station C */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_C);
+	const StationSnapshot *unint_step3_C0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_C);
+	REQUIRE(unint_step3_C0 != nullptr);
+	std::string unint_step3_main_C0 = unint_step3_C0->GetViewportString(false);
+	std::string unint_step3_mini_C0 = unint_step3_C0->GetViewportString(true);
+	uint16_t unint_step3_w_norm_C0  = unint_step3_C0->sign.width_normal;
+	uint16_t unint_step3_w_small_C0 = unint_step3_C0->sign.width_small;
+	uint32_t unint_step3_h_C0       = unint_step3_C0->handle;
+
+	CHECK(unint_step3_h_C0 == 3);
+	CHECK(unint_step3_C0->original_id == id_B);
+	CHECK(unint_step3_mini_C0 == "Sedan Junction");
+	CHECK(unint_step3_C0->facilities.Test(StationFacility::Dock));
+
+	/* Side 1 unobserving side STILL retains stale Waypoint B and does NOT see Station C */
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side1, tile_C) == nullptr);
+	const StationSnapshot *unint_step3_B1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
+	REQUIRE(unint_step3_B1 != nullptr);
+	CHECK(unint_step3_B1->handle == 2);
+	CHECK(unint_step3_B1->name == "Meuse Waypoint");
+
+	/* Counter progression */
+	CHECK(MilitaryFog::GetSideIntelligence(side0).next_station_handle == 4);
+	CHECK(MilitaryFog::GetSideIntelligence(side1).next_station_handle == 3);
+
+	/* Clean up live objects */
+	MakeClear(tile_A, ClearGround::Grass, 0);
+	delete st_A;
+	MakeClear(tile_C, ClearGround::Grass, 0);
+	delete st_C;
+
+	/* --- PATH 2: Loaded continuation equivalence --- */
+	MilitaryFog::Reset();
+	REQUIRE_FALSE(MilitaryFog::IsActive());
+
+	SaveLoadResult load_res = SaveOrLoad("test_station_labels_continuation.sav", SaveLoadOperation::Load, DetailedFileType::GameFile, Subdirectory::None, false);
+	REQUIRE(load_res == SaveLoadResult::Ok);
+	std::remove("test_station_labels_continuation.sav");
+
+	REQUIRE(MilitaryFog::IsActive());
+
+	/* Assert next_station_handle counters post-load */
+	CHECK(MilitaryFog::GetSideIntelligence(side0).next_station_handle == 3);
+	CHECK(MilitaryFog::GetSideIntelligence(side1).next_station_handle == 3);
+
+	/* Immediately after load: check stale values, side isolation, and derived geometry */
+	const StationSnapshot *loaded_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A);
+	const StationSnapshot *loaded_B0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_B);
+	const StationSnapshot *loaded_A1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_A);
+	const StationSnapshot *loaded_B1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
+	REQUIRE(loaded_A0 != nullptr);
+	REQUIRE(loaded_B0 != nullptr);
+	REQUIRE(loaded_A1 != nullptr);
+	REQUIRE(loaded_B1 != nullptr);
+
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side0, tile_dummy) == nullptr);
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side1, tile_dummy) == nullptr);
+
+	/* Side 0 retained stale Station A */
+	CHECK(loaded_A0->handle == 1);
+	CHECK(loaded_A0->original_id == StationID{0});
+	CHECK(loaded_A0->name == "Verdun Rail Depot");
+	CHECK(loaded_A0->GetViewportString(false) == unint_pre_main_A0);
+	CHECK(loaded_A0->GetViewportString(true)  == unint_pre_mini_A0);
+	CHECK(loaded_A0->sign.width_normal == unint_pre_w_norm_A0);
+	CHECK(loaded_A0->sign.width_small  == unint_pre_w_small_A0);
+
+	/* Side 1 retained refreshed Station A */
+	CHECK(loaded_A1->handle == 1);
+	CHECK(loaded_A1->original_id == StationID{0});
+	CHECK(loaded_A1->name == "Verdun Terminal");
+	CHECK(loaded_A1->GetViewportString(false) == unint_pre_main_A1);
+	CHECK(loaded_A1->GetViewportString(true)  == unint_pre_mini_A1);
+	CHECK(loaded_A1->sign.width_normal == unint_pre_w_norm_A1);
+	CHECK(loaded_A1->sign.width_small  == unint_pre_w_small_A1);
+
+	/* Stale Waypoint B retained by Side 0 */
+	CHECK(loaded_B0->handle == 2);
+	CHECK(loaded_B0->original_id == id_B);
+	CHECK(loaded_B0->name == "Meuse Waypoint");
+	CHECK(loaded_B0->GetViewportString(false) == unint_pre_main_B0);
+	CHECK(loaded_B0->GetViewportString(true)  == unint_pre_mini_B0);
+	CHECK(loaded_B0->sign.width_normal == unint_pre_w_norm_B0);
+	CHECK(loaded_B0->sign.width_small  == unint_pre_w_small_B0);
+
+	/* Stale Waypoint B retained by Side 1 */
+	CHECK(loaded_B1->handle == 2);
+	CHECK(loaded_B1->original_id == id_B);
+	CHECK(loaded_B1->name == "Meuse Waypoint");
+	CHECK(loaded_B1->GetViewportString(false) == unint_pre_main_B1);
+	CHECK(loaded_B1->GetViewportString(true)  == unint_pre_mini_B1);
+	CHECK(loaded_B1->sign.width_normal == unint_pre_w_norm_B1);
+	CHECK(loaded_B1->sign.width_small  == unint_pre_w_small_B1);
+
+	/* Loaded continuation Step 1: Side 0 scouts tile_A */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A);
+	const StationSnapshot *loaded_step1_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A);
+	REQUIRE(loaded_step1_A0 != nullptr);
+	CHECK(loaded_step1_A0->GetViewportString(false) == unint_step1_main_A0);
+	CHECK(loaded_step1_A0->GetViewportString(true)  == unint_step1_mini_A0);
+	CHECK(loaded_step1_A0->sign.width_normal == unint_step1_w_norm_A0);
+	CHECK(loaded_step1_A0->sign.width_small  == unint_step1_w_small_A0);
+	CHECK(loaded_step1_A0->handle == unint_step1_h_A0);
+	CHECK(loaded_step1_A0->handle == 1);
+
+	/* Loaded continuation Step 2: Side 0 scouts tile_B -> discovers demolition */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_B);
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side0, tile_B) == nullptr);
+
+	/* Side 1 unobserving side retains stale Waypoint B */
+	const StationSnapshot *loaded_step2_B1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
+	REQUIRE(loaded_step2_B1 != nullptr);
+	CHECK(loaded_step2_B1->handle == 2);
+	CHECK(loaded_step2_B1->original_id == id_B);
+	CHECK(loaded_step2_B1->name == "Meuse Waypoint");
+	CHECK(loaded_step2_B1->GetViewportString(false) == unint_pre_main_B1);
+	CHECK(loaded_step2_B1->GetViewportString(true)  == unint_pre_mini_B1);
+	CHECK(loaded_step2_B1->sign.width_normal == unint_pre_w_norm_B1);
+	CHECK(loaded_step2_B1->sign.width_small  == unint_pre_w_small_B1);
+
+	/* Loaded continuation Step 3: Station C created reusing ID at tile_C */
+	REQUIRE(Station::CanAllocateItem());
+	Station *loaded_st_C = Station::CreateAtIndex(id_B, tile_C);
+	REQUIRE(loaded_st_C != nullptr);
+	loaded_st_C->name = "Sedan Junction";
+	loaded_st_C->owner = CompanyID{1};
+	loaded_st_C->facilities = {StationFacility::Train, StationFacility::Dock};
+	MakeRailStation(tile_C, CompanyID{1}, loaded_st_C->index, Axis::X, 0, RAILTYPE_BEGIN);
+	loaded_st_C->spread = TileArea(tile_C, 1, 1);
+	loaded_st_C->train_station = TileArea(tile_C, 1, 1);
+	loaded_st_C->UpdateVirtCoord();
+
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_C);
+	const StationSnapshot *loaded_step3_C0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_C);
+	REQUIRE(loaded_step3_C0 != nullptr);
+	CHECK(loaded_step3_C0->GetViewportString(false) == unint_step3_main_C0);
+	CHECK(loaded_step3_C0->GetViewportString(true)  == unint_step3_mini_C0);
+	CHECK(loaded_step3_C0->sign.width_normal == unint_step3_w_norm_C0);
+	CHECK(loaded_step3_C0->sign.width_small  == unint_step3_w_small_C0);
+	CHECK(loaded_step3_C0->handle == unint_step3_h_C0);
+	CHECK(loaded_step3_C0->handle == 3);
+	CHECK(loaded_step3_C0->original_id == id_B);
+
+	/* Side 1 unobserving side keeps stale knowledge and does not observe Station C */
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side1, tile_C) == nullptr);
+
+	const StationSnapshot *loaded_step3_A1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_A);
+	REQUIRE(loaded_step3_A1 != nullptr);
+	CHECK(loaded_step3_A1->handle == 1);
+	CHECK(loaded_step3_A1->name == "Verdun Terminal");
+	CHECK(loaded_step3_A1->GetViewportString(false) == unint_pre_main_A1);
+	CHECK(loaded_step3_A1->GetViewportString(true)  == unint_pre_mini_A1);
+	CHECK(loaded_step3_A1->sign.width_normal == unint_pre_w_norm_A1);
+	CHECK(loaded_step3_A1->sign.width_small  == unint_pre_w_small_A1);
+
+	const StationSnapshot *loaded_step3_B1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
+	REQUIRE(loaded_step3_B1 != nullptr);
+	CHECK(loaded_step3_B1->handle == 2);
+	CHECK(loaded_step3_B1->original_id == id_B);
+	CHECK(loaded_step3_B1->name == "Meuse Waypoint");
+	CHECK(loaded_step3_B1->GetViewportString(false) == unint_pre_main_B1);
+	CHECK(loaded_step3_B1->GetViewportString(true)  == unint_pre_mini_B1);
+	CHECK(loaded_step3_B1->sign.width_normal == unint_pre_w_norm_B1);
+	CHECK(loaded_step3_B1->sign.width_small  == unint_pre_w_small_B1);
+
+	/* Counter progression matches uninterrupted continuation */
+	CHECK(MilitaryFog::GetSideIntelligence(side0).next_station_handle == 4);
+	CHECK(MilitaryFog::GetSideIntelligence(side1).next_station_handle == 3);
+
+	/* Clean up loaded live objects */
+	MakeClear(tile_A, ClearGround::Grass, 0);
+	Station *loaded_st_A = Station::GetIfValid(StationID{0});
+	if (loaded_st_A != nullptr) delete loaded_st_A;
+
+	MakeClear(tile_C, ClearGround::Grass, 0);
+	delete loaded_st_C;
 
 	ResetFogTestEnvironment();
 }

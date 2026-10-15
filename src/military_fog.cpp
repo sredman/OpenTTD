@@ -296,7 +296,8 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 
 			/* If previous snapshot matches current live industry attributes, keep it */
 			if (prev_snap != nullptr && prev_snap->location == root && prev_snap->type == i->type &&
-					prev_snap->colour == i->random_colour && prev_snap->name == GetSafeIndustryName(i)) {
+					prev_snap->colour == i->random_colour && prev_snap->name == GetSafeIndustryName(i) &&
+					prev_snap->owner == i->owner) {
 				if (tile == root) {
 					prev_snap->prod_level = i->prod_level;
 					prev_snap->owner = i->owner;
@@ -304,9 +305,13 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 				if (std::find(prev_snap->observed_tiles.begin(), prev_snap->observed_tiles.end(), tile) == prev_snap->observed_tiles.end()) {
 					prev_snap->observed_tiles.push_back(tile);
 				}
-				intel.tile_to_industry_handle[tile.base()] = prev_snap->handle;
+				if (tile.base() < intel.tile_to_industry_handle.size()) {
+					intel.tile_to_industry_handle[tile.base()] = prev_snap->handle;
+				}
 			} else {
 				/* Tile changed or is new: detach tile from previous snapshot without mutating remaining hidden tiles */
+				uint8_t prev_prod = (prev_snap != nullptr) ? prev_snap->prod_level : 0;
+
 				if (prev_snap != nullptr) {
 					auto it = std::find(prev_snap->observed_tiles.begin(), prev_snap->observed_tiles.end(), tile);
 					if (it != prev_snap->observed_tiles.end()) {
@@ -316,12 +321,14 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 						prev_snap->exists = false;
 					}
 				}
+				prev_snap = nullptr; // Raw pointer must not be accessed across potential vector growth
 
 				/* Find if an existing active snapshot already represents this new live industry appearance at root */
 				IndustrySnapshot *snap = nullptr;
 				for (auto &existing : intel.industry_snapshots) {
 					if (existing.exists && existing.location == root && existing.type == i->type &&
-							existing.colour == i->random_colour && existing.name == GetSafeIndustryName(i)) {
+							existing.colour == i->random_colour && existing.name == GetSafeIndustryName(i) &&
+							existing.owner == i->owner) {
 						snap = &existing;
 						break;
 					}
@@ -335,8 +342,8 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 					snap->type = i->type;
 					snap->colour = i->random_colour;
 					snap->name = GetSafeIndustryName(i);
-					snap->owner = (prev_snap != nullptr) ? prev_snap->owner : i->owner;
-					snap->prod_level = (prev_snap != nullptr) ? prev_snap->prod_level : 0;
+					snap->owner = i->owner;
+					snap->prod_level = (tile == root) ? i->prod_level : prev_prod;
 				}
 				if (tile == root) {
 					snap->prod_level = i->prod_level;
@@ -347,7 +354,9 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 				if (std::find(snap->observed_tiles.begin(), snap->observed_tiles.end(), tile) == snap->observed_tiles.end()) {
 					snap->observed_tiles.push_back(tile);
 				}
-				intel.tile_to_industry_handle[tile.base()] = snap->handle;
+				if (tile.base() < intel.tile_to_industry_handle.size()) {
+					intel.tile_to_industry_handle[tile.base()] = snap->handle;
+				}
 			}
 		}
 	} else {

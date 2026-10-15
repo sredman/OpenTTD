@@ -64,8 +64,8 @@ zoomto 0
 schedule_ticks 60 "hide_and_delete_industry_a"
 schedule_ticks 180 "observe_industry_b"
 schedule_ticks 300 "partial_rescout_industry_a"
-schedule_ticks 420 "rescout_industry_a"
-schedule_ticks 660 "exit"
+schedule_ticks 480 "rescout_industry_a"
+schedule_ticks 900 "exit"
 unpause
 EOF
 
@@ -83,7 +83,7 @@ import -display "${DISPLAY_NUM}" -window root capture_industry_stale_a.png
 echo "Captured capture_industry_stale_a.png"
 
 # Frame 2: After tick 180, Industry B created reusing ID and observed -> A still unchanged stale snapshot, B observed
-sleep 4.0
+sleep 3.5
 import -display "${DISPLAY_NUM}" -window root capture_industry_observed_b.png
 echo "Captured capture_industry_observed_b.png"
 
@@ -92,8 +92,8 @@ sleep 4.0
 import -display "${DISPLAY_NUM}" -window root capture_industry_partial_a.png
 echo "Captured capture_industry_partial_a.png"
 
-# Frame 4: After tick 420, Aircraft scouts all of A -> tile A and A2 cleared, Coal Mine removed on minimap, B remains
-sleep 4.0
+# Frame 4: After tick 480, Aircraft scouts all of A -> tile A and A2 cleared, Coal Mine removed on minimap, B remains
+sleep 5.0
 import -display "${DISPLAY_NUM}" -window root capture_industry_rescout_a.png
 echo "Captured capture_industry_rescout_a.png"
 

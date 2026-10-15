@@ -1562,38 +1562,7 @@ TEST_CASE("MilitaryFog - Owner-only per-tile version isolation, vector growth, a
 	}
 	CHECK(MilitaryFog::GetIndustryTypeCount(0, 1) == 1);
 
-	/* 3. Vector growth regression: cause snapshots vector to reallocate during appearance updates */
-	SideIntelligence &intel = MilitaryFog::GetSideIntelligence(0);
-	size_t initial_cap = intel.industry_snapshots.capacity();
-	uint32_t base_handle = snap_D1_new->handle;
-	/* Create multiple synthetic appearance versions across unused tiles to trigger capacity growth */
-	for (size_t g = 0; g < initial_cap + 10; g++) {
-		TileIndex dummy_tile = TileXY(10 + (g % 30), 10 + (g / 30));
-		if (dummy_tile == ind_tile_D || dummy_tile == ind_tile_D2) continue;
-		/* Emplace snapshot to simulate version additions */
-		uint32_t dummy_handle = intel.next_industry_handle++;
-		intel.industry_snapshots.emplace_back();
-		IndustrySnapshot &dummy_snap = intel.industry_snapshots.back();
-		dummy_snap.handle = dummy_handle;
-		dummy_snap.location = dummy_tile;
-		dummy_snap.exists = true;
-		dummy_snap.type = 1;
-		dummy_snap.owner = Owner{static_cast<uint8_t>(g % 4)};
-		dummy_snap.observed_tiles.push_back(dummy_tile);
-		intel.tile_to_industry_handle[dummy_tile.base()] = dummy_handle;
-	}
-	CHECK(intel.industry_snapshots.capacity() > initial_cap);
-
-	/* Re-verify memory safety and validity of D snapshots after vector reallocations */
-	const IndustrySnapshot *post_growth_D1 = MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_D);
-	const IndustrySnapshot *post_growth_D2 = MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_D2);
-	REQUIRE(post_growth_D1 != nullptr);
-	REQUIRE(post_growth_D2 != nullptr);
-	CHECK(post_growth_D1->handle == base_handle);
-	CHECK(post_growth_D1->owner == Owner{2});
-	CHECK(post_growth_D2->owner == OWNER_NONE);
-
-	/* 4. Save and loaded-vs-uninterrupted continuation of mixed owner state */
+	/* 3. Save and loaded-vs-uninterrupted continuation of mixed owner state */
 	SaveLoadResult save_res = SaveOrLoad("test_owner_mixed.sav", SaveLoadOperation::Save, DetailedFileType::GameFile, Subdirectory::None, false);
 	REQUIRE(save_res == SaveLoadResult::Ok);
 
@@ -1602,14 +1571,14 @@ TEST_CASE("MilitaryFog - Owner-only per-tile version isolation, vector growth, a
 	const IndustrySnapshot *unint_D2 = MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_D2);
 	REQUIRE(unint_D2 != nullptr);
 	CHECK(unint_D2->owner == Owner{2});
-	CHECK(unint_D2->handle == post_growth_D1->handle);
+	CHECK(unint_D2->handle == snap_D1_new->handle);
 	{
 		ActiveSnapshotScope scope(0);
 		TileDesc td2{};
 		GetTileDesc(ind_tile_D2, td2);
 		CHECK(td2.owner[0] == Owner{2}); // D2 refreshed to new owner
 	}
-	CHECK(post_growth_D2->exists == false); // Old snapshot retired
+	CHECK(snap_D2_old->exists == false); // Old snapshot retired
 
 	/* Path 2: Loaded continuation */
 	MilitaryFog::Reset();
@@ -1652,11 +1621,102 @@ TEST_CASE("MilitaryFog - Owner-only per-tile version isolation, vector growth, a
 	}
 	CHECK(loaded_D2->exists == false); // Old snapshot retired
 
-	/* Clean up */
+	/* Clean up D */
 	Industry *loaded_ind_D = Industry::GetByTileIfValid(ind_tile_D);
 	if (loaded_ind_D != nullptr) delete loaded_ind_D;
 	MakeClear(ind_tile_D, ClearGround::Grass, 0);
 	MakeClear(ind_tile_D2, ClearGround::Grass, 0);
+
+	/* 4. Vector growth regression inside production RefreshStationarySnapshot path */
+	TileIndex ind_tile_E = TileXY(130, 130);
+	TileIndex ind_tile_E2 = ind_tile_E + TileDiffXY(1, 0);
+	TileIndex ind_tile_E3 = ind_tile_E + TileDiffXY(2, 0);
+
+	REQUIRE(Industry::CanAllocateItem());
+	Industry *ind_E = Industry::Create(ind_tile_E);
+	REQUIRE(ind_E != nullptr);
+	ind_E->type = 2; // Sawmill
+	ind_E->location = TileArea(ind_tile_E, 3, 1);
+	ind_E->owner = OWNER_NONE;
+	ind_E->random_colour = Colours::Green;
+	ind_E->prod_level = 100;
+	Industry::industries[ind_E->type].insert(ind_E->index);
+
+	MakeIndustry(ind_tile_E, ind_E->index, 0, 0, WaterClass::Invalid);
+	SetIndustryCompleted(ind_tile_E);
+	SetIndustryConstructionStage(ind_tile_E, 3);
+	MakeIndustry(ind_tile_E2, ind_E->index, 1, 0, WaterClass::Invalid);
+	SetIndustryCompleted(ind_tile_E2);
+	SetIndustryConstructionStage(ind_tile_E2, 3);
+	MakeIndustry(ind_tile_E3, ind_E->index, 2, 0, WaterClass::Invalid);
+	SetIndustryCompleted(ind_tile_E3);
+	SetIndustryConstructionStage(ind_tile_E3, 3);
+
+	/* Scout all three tiles initially into a shared version */
+	MilitaryFog::RefreshStationarySnapshot(0, ind_tile_E);
+	MilitaryFog::RefreshStationarySnapshot(0, ind_tile_E2);
+	MilitaryFog::RefreshStationarySnapshot(0, ind_tile_E3);
+
+	const IndustrySnapshot *snap_E_init = MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_E);
+	REQUIRE(snap_E_init != nullptr);
+	CHECK(snap_E_init->prod_level == 100);
+	CHECK(snap_E_init->owner == OWNER_NONE);
+
+	/* Control capacity using existing access: pad inactive entries up to capacity so the next snapshot allocation MUST reallocate */
+	SideIntelligence &intel = MilitaryFog::GetSideIntelligence(0);
+	while (intel.industry_snapshots.size() < intel.industry_snapshots.capacity()) {
+		intel.industry_snapshots.emplace_back();
+	}
+	size_t cap_before = intel.industry_snapshots.capacity();
+
+	/* Live industry undergoes owner and production change */
+	ind_E->owner = Owner{3};
+	ind_E->prod_level = 250;
+
+	/* Observe non-root tile E2 while root E and sibling E3 remain hidden under fog.
+	 * This forces a non-root appearance allocation inside RefreshStationarySnapshot,
+	 * reallocating industry_snapshots vector while prior snapshot is in use and retaining prev_prod. */
+	MilitaryFog::RefreshStationarySnapshot(0, ind_tile_E2);
+
+	/* Verify vector capacity demonstrably grew inside RefreshStationarySnapshot */
+	CHECK(intel.industry_snapshots.capacity() > cap_before);
+
+	/* Reacquire test pointers safely after reallocation */
+	const IndustrySnapshot *snap_E2 = MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_E2);
+	REQUIRE(snap_E2 != nullptr);
+	CHECK(snap_E2->owner == Owner{3});
+	CHECK(snap_E2->prod_level == 100); // Retained prior production, NOT live root production (250)
+
+	/* Verify still-hidden siblings retain prior description and state */
+	const IndustrySnapshot *snap_E1 = MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_E);
+	const IndustrySnapshot *snap_E3 = MilitaryFog::GetIndustrySnapshotAtTile(0, ind_tile_E3);
+	REQUIRE(snap_E1 != nullptr);
+	REQUIRE(snap_E3 != nullptr);
+	CHECK(snap_E1->owner == OWNER_NONE);
+	CHECK(snap_E3->owner == OWNER_NONE);
+	CHECK(snap_E1->prod_level == 100);
+	CHECK(snap_E3->prod_level == 100);
+
+	{
+		ActiveSnapshotScope scope(0);
+		TileDesc td_E2{};
+		GetTileDesc(ind_tile_E2, td_E2);
+		CHECK(td_E2.owner[0] == Owner{3});
+
+		TileDesc td_E1{};
+		GetTileDesc(ind_tile_E, td_E1);
+		CHECK(td_E1.owner[0] == OWNER_NONE);
+
+		TileDesc td_E3{};
+		GetTileDesc(ind_tile_E3, td_E3);
+		CHECK(td_E3.owner[0] == OWNER_NONE);
+	}
+
+	/* Clean up E */
+	delete ind_E;
+	MakeClear(ind_tile_E, ClearGround::Grass, 0);
+	MakeClear(ind_tile_E2, ClearGround::Grass, 0);
+	MakeClear(ind_tile_E3, ClearGround::Grass, 0);
 
 	ResetFogTestEnvironment();
 }

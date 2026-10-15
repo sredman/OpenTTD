@@ -1005,6 +1005,11 @@ void MilitaryFog::Save()
 		}
 
 		/* Save town_snapshots */
+		SlWriteByte(GB(intel.next_town_handle, 24, 8));
+		SlWriteByte(GB(intel.next_town_handle, 16, 8));
+		SlWriteByte(GB(intel.next_town_handle, 8, 8));
+		SlWriteByte(GB(intel.next_town_handle, 0, 8));
+
 		uint32_t num_towns = static_cast<uint32_t>(intel.town_snapshots.size());
 		SlWriteByte(GB(num_towns, 24, 8));
 		SlWriteByte(GB(num_towns, 16, 8));
@@ -1013,6 +1018,14 @@ void MilitaryFog::Save()
 		for (const auto &ts : intel.town_snapshots) {
 			SlWriteByte(ts.exists ? 1 : 0);
 			if (ts.exists) {
+				SlWriteByte(GB(ts.handle, 24, 8));
+				SlWriteByte(GB(ts.handle, 16, 8));
+				SlWriteByte(GB(ts.handle, 8, 8));
+				SlWriteByte(GB(ts.handle, 0, 8));
+
+				SlWriteByte(GB(ts.original_id.base(), 8, 8));
+				SlWriteByte(GB(ts.original_id.base(), 0, 8));
+
 				SlWriteByte(GB(ts.population, 24, 8));
 				SlWriteByte(GB(ts.population, 16, 8));
 				SlWriteByte(GB(ts.population, 8, 8));
@@ -1172,6 +1185,13 @@ void MilitaryFog::Load()
 			intel.contacts.push_back(c);
 		}
 
+		/* Load town_snapshots */
+		uint32_t next_town_h = (static_cast<uint32_t>(SlReadByte()) << 24);
+		next_town_h |= (static_cast<uint32_t>(SlReadByte()) << 16);
+		next_town_h |= (static_cast<uint32_t>(SlReadByte()) << 8);
+		next_town_h |= static_cast<uint32_t>(SlReadByte());
+		intel.next_town_handle = next_town_h;
+
 		uint32_t num_towns = (static_cast<uint32_t>(SlReadByte()) << 24);
 		num_towns |= (static_cast<uint32_t>(SlReadByte()) << 16);
 		num_towns |= (static_cast<uint32_t>(SlReadByte()) << 8);
@@ -1181,6 +1201,16 @@ void MilitaryFog::Load()
 			TownSnapshot &ts = intel.town_snapshots[j];
 			ts.exists = (SlReadByte() != 0);
 			if (ts.exists) {
+				uint32_t h = (static_cast<uint32_t>(SlReadByte()) << 24);
+				h |= (static_cast<uint32_t>(SlReadByte()) << 16);
+				h |= (static_cast<uint32_t>(SlReadByte()) << 8);
+				h |= static_cast<uint32_t>(SlReadByte());
+				ts.handle = h;
+
+				uint16_t orig_id = (static_cast<uint16_t>(SlReadByte()) << 8);
+				orig_id |= static_cast<uint16_t>(SlReadByte());
+				ts.original_id = TownID{orig_id};
+
 				uint32_t pop = (static_cast<uint32_t>(SlReadByte()) << 24);
 				pop |= (static_cast<uint32_t>(SlReadByte()) << 16);
 				pop |= (static_cast<uint32_t>(SlReadByte()) << 8);
@@ -1207,14 +1237,11 @@ void MilitaryFog::Load()
 				for (uint16_t k = 0; k < name_len; k++) {
 					ts.name[k] = static_cast<char>(SlReadByte());
 				}
-				ts.handle = j + 1;
-				ts.original_id = TownID{static_cast<uint16_t>(j)};
 				ts.UpdateVirtCoord();
 			} else {
 				ts = TownSnapshot{};
 			}
 		}
-		intel.next_town_handle = num_towns + 1;
 
 		uint32_t next_h = (static_cast<uint32_t>(SlReadByte()) << 24);
 		next_h |= (static_cast<uint32_t>(SlReadByte()) << 16);
@@ -1307,11 +1334,12 @@ struct MFOGChunkHandler : ChunkHandler {
 				len += 4 + MilitaryFog::GetSideIntelligence(s).contacts.size() * 18;
 
 				const auto &intel = MilitaryFog::GetSideIntelligence(s);
+				len += 4; // next_town_handle
 				len += 4; // num_towns
 				for (const auto &ts : intel.town_snapshots) {
 					len += 1; // exists
 					if (ts.exists) {
-						len += 4 + 4 + 4 + 1 + 2 + ts.name.size();
+						len += 4 + 2 + 4 + 4 + 4 + 1 + 2 + ts.name.size(); // handle (4) + original_id (2) + pop (4) + num_houses (4) + xy (4) + larger_town (1) + name_len (2) + name
 					}
 				}
 

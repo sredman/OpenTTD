@@ -48,6 +48,10 @@
 #include "misc_cmd.h"
 #include "disaster_vehicle.h"
 #include "military_fog.h"
+#include "industry.h"
+#include "industry_map.h"
+#include "clear_map.h"
+#include "smallmap_gui.h"
 
 #if defined(WITH_ZLIB)
 #include "network/network_content.h"
@@ -3035,6 +3039,134 @@ static bool ConRelocateMilitaryAircraft(std::span<std::string_view> argv)
 	return false;
 }
 
+static IndustryID _fixture_ind_id{};
+
+/** Setup industry fixture command. @copydoc IConsoleCmdProc */
+static bool ConSetupIndustryFixture([[maybe_unused]] std::span<std::string_view> argv)
+{
+	if (!SetupMilitaryScenario()) {
+		IConsolePrint(CC_DEFAULT, "Failed: map must be at least 256x256.");
+		return false;
+	}
+
+	TileIndex tile_A = TileXY(140, 100);
+	if (Industry::CanAllocateItem()) {
+		Industry *ind = Industry::Create(tile_A);
+		if (ind != nullptr) {
+			ind->type = 0;
+			ind->location.tile = tile_A;
+			ind->owner = OWNER_NONE;
+			ind->random_colour = Colours::Red;
+			ind->cached_name = "FixtureCoalMineA";
+			_fixture_ind_id = ind->index;
+			MakeIndustry(tile_A, _fixture_ind_id, 0, 0, WaterClass::Invalid);
+			SetIndustryCompleted(tile_A);
+			SetIndustryConstructionStage(tile_A, 3);
+		}
+	}
+
+	/* Scout tile A initially */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Open SmallMap and set to Industries mode */
+	ShowSmallMapIndustries();
+
+	/* Scroll main window to tile A */
+	ScrollMainWindowToTile(tile_A, true);
+
+	IConsolePrint(CC_DEFAULT, "Industry fixture initialized: Industry A scouted, SmallMap in Industries mode.");
+	return true;
+}
+
+/** Hide and delete industry A command. @copydoc IConsoleCmdProc */
+static bool ConHideAndDeleteIndustryA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft far away to (60, 60) so tile A is hidden under fog */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(60 * TILE_SIZE, 60 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(60 * TILE_SIZE, 60 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Delete Industry A from live pool and clear tile while hidden */
+	TileIndex tile_A = TileXY(140, 100);
+	Industry *ind = Industry::GetIfValid(_fixture_ind_id);
+	if (ind != nullptr) {
+		delete ind;
+	}
+	MakeClear(tile_A, ClearGround::Grass, 0);
+
+	/* Ensure main window stays centered on tile A */
+	ScrollMainWindowToTile(tile_A, true);
+
+	IConsolePrint(CC_DEFAULT, "Industry A deleted while hidden; A is now stale snapshot.");
+	return true;
+}
+
+/** Observe industry B command. @copydoc IConsoleCmdProc */
+static bool ConObserveIndustryB([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Create Industry B at (180, 120) reusing Industry A's ID */
+	TileIndex tile_B = TileXY(180, 120);
+	Industry *reused_ind = Industry::CreateAtIndex(_fixture_ind_id, tile_B);
+	if (reused_ind != nullptr) {
+		reused_ind->type = 2;
+		reused_ind->location.tile = tile_B;
+		reused_ind->owner = OWNER_NONE;
+		reused_ind->random_colour = Colours::Green;
+		reused_ind->cached_name = "FixturePowerStationB";
+		MakeIndustry(tile_B, _fixture_ind_id, 2, 0, WaterClass::Invalid);
+		SetIndustryCompleted(tile_B);
+		SetIndustryConstructionStage(tile_B, 3);
+	}
+
+	/* Move aircraft to (180, 120) to observe B while A at (140, 100) remains hidden */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(180 * TILE_SIZE, 120 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(180 * TILE_SIZE, 120 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Keep main window centered on tile A */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Industry B created and observed; tile A remains hidden.");
+	return true;
+}
+
+/** Rescout industry A command. @copydoc IConsoleCmdProc */
+static bool ConRescoutIndustryA([[maybe_unused]] std::span<std::string_view> argv)
+{
+	/* Move aircraft back to (140, 100) to re-scout tile A */
+	for (DisasterVehicle *v : DisasterVehicle::Iterate()) {
+		if (v->subtype == ST_MILITARY_AIRCRAFT) {
+			v->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, GetAircraftFlightLevel(v));
+			if (v->Next() != nullptr) v->Next()->UpdatePosition(140 * TILE_SIZE, 100 * TILE_SIZE, 0);
+			break;
+		}
+	}
+	MilitaryFog::UpdateAllVisibility();
+
+	/* Keep main window centered on tile A */
+	ScrollMainWindowToTile(TileXY(140, 100), true);
+
+	IConsolePrint(CC_DEFAULT, "Tile A rescouted: removal discovered.");
+	return true;
+}
+
 /** Schedule command execution after N ticks. @copydoc IConsoleCmdProc */
 static bool ConScheduleTicks(std::span<std::string_view> argv)
 {
@@ -3256,4 +3388,8 @@ void IConsoleStdLibRegister()
 	IConsole::CmdRegister("reset_military_scenario", ConResetMilitaryScenario);
 	IConsole::CmdRegister("relocate_military_aircraft", ConRelocateMilitaryAircraft);
 	IConsole::CmdRegister("follow_military_aircraft", ConFollowMilitaryAircraft);
+	IConsole::CmdRegister("setup_industry_fixture",    ConSetupIndustryFixture);
+	IConsole::CmdRegister("hide_and_delete_industry_a", ConHideAndDeleteIndustryA);
+	IConsole::CmdRegister("observe_industry_b",        ConObserveIndustryB);
+	IConsole::CmdRegister("rescout_industry_a",        ConRescoutIndustryA);
 }

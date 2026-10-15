@@ -255,6 +255,18 @@ struct Industry : IndustryPool::PoolItem<&_industry_pool> {
 		return Industry::Get(GetIndustryIndex(tile));
 	}
 
+	/**
+	 * Get the industry of the given tile if valid, or nullptr otherwise.
+	 * @param tile Tile to query.
+	 * @return Pointer to Industry, or nullptr if tile does not hold a valid industry.
+	 */
+	static inline Industry *GetByTileIfValid(TileIndex tile)
+	{
+		if (!IsTileType(tile, TileType::Industry)) return nullptr;
+		IndustryID iid = GetIndustryIndex(tile);
+		return Industry::GetIfValid(iid);
+	}
+
 	static Industry *GetRandom();
 	static void PostDestructor(size_t index);
 

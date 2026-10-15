@@ -632,6 +632,7 @@ static constexpr VehicleTypeIndexArray<PixelColour, VehicleType::End> _vehicle_t
 
 /** Class managing the smallmap window. */
 class SmallMapWindow : public Window {
+	friend void ShowSmallMapIndustries();
 protected:
 	/** Available kinds of zoomlevel changes. */
 	enum class ZoomLevelChange : uint8_t {
@@ -1023,6 +1024,47 @@ protected:
 	{
 		if (this->map_type != SmallMapType::Industries) return;
 
+		if (MilitaryFog::IsActive()) {
+			uint8_t side = ActiveSnapshotScope::IsActive() ? ActiveSnapshotScope::GetCurrentSide() : MilitaryFog::GetLocalIntelligenceSide();
+			if (side < MAX_MILITARY_SIDES) {
+				const auto &intel = MilitaryFog::GetSideIntelligence(side);
+				for (const auto &is : intel.industry_snapshots) {
+					if (!is.exists || is.location == INVALID_TILE) continue;
+					if (is.type >= NUM_INDUSTRYTYPES) continue;
+					uint list_pos = _industry_to_list_pos[is.type];
+					if (list_pos >= lengthof(_legend_from_industries)) continue;
+					const LegendAndColour &tbl = _legend_from_industries[list_pos];
+					if (!tbl.show_on_map) continue;
+
+					/* Industry names blink together with their blobs in the smallmap. */
+					const bool is_blinking = is.type == _smallmap_industry_highlight && !_smallmap_industry_highlight_state;
+					if (is_blinking) continue;
+
+					if (_industry_to_name_string_width[is.type] == 0) {
+						_industry_to_name_string_width[is.type] = GetStringBoundingBox(tbl.legend, FontSize::Small).width;
+					}
+					const uint16_t &legend_text_width = _industry_to_name_string_width[is.type];
+
+					/* Remap the industry coordinate */
+					const TileIndex &tile = is.location;
+					const Point pt = this->RemapTile(TileX(tile), TileY(tile));
+					const int x = pt.x - this->subscroll - (legend_text_width / 2);
+					const int y = pt.y + vertical_padding;
+
+					/* Check if the industry name is within bounds */
+					if (x + legend_text_width > dpi->left &&
+							x < dpi->left + dpi->width &&
+							y + GetCharacterHeight(FontSize::Small) > dpi->top &&
+							y < dpi->top + dpi->height) {
+
+						/* And draw it. */
+						DrawString(x, x + legend_text_width, y, tbl.legend, TextColour::White, AlignmentH::Start, false, FontSize::Small);
+					}
+				}
+				return;
+			}
+		}
+
 		for (const Industry *i : Industry::Iterate()) {
 			const LegendAndColour &tbl = _legend_from_industries[_industry_to_list_pos[i->type]];
 			if (!tbl.show_on_map) continue;
@@ -1356,8 +1398,19 @@ protected:
 					if (this->map_type == SmallMapType::Industries) {
 						/* If industry is allowed to be seen, use its colour on the map.
 						 * This has the highest priority above any value in _tiletype_importance. */
-						IndustryType type = Industry::GetByTile(ti)->type;
-						if (_legend_from_industries[_industry_to_list_pos[type]].show_on_map) {
+						IndustryType type = IT_INVALID;
+						if (ActiveSnapshotScope::IsActive()) {
+							const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshotAtTile(ActiveSnapshotScope::GetCurrentSide(), ti);
+							if (is != nullptr) {
+								type = is->type;
+							}
+						} else {
+							const Industry *ind = Industry::GetByTileIfValid(ti);
+							if (ind != nullptr) {
+								type = ind->type;
+							}
+						}
+						if (type != IT_INVALID && type < NUM_INDUSTRYTYPES && _legend_from_industries[_industry_to_list_pos[type]].show_on_map) {
 							if (type == _smallmap_industry_highlight) {
 								if (_smallmap_industry_highlight_state) return MKCOLOUR_XXXX(PC_WHITE);
 							} else {
@@ -2157,6 +2210,23 @@ static WindowDesc _smallmap_desc(
 void ShowSmallMap()
 {
 	AllocateWindowDescFront<SmallMapWindow>(_smallmap_desc, 0);
+}
+
+/**
+ * Show the smallmap window in Industries mode with industry names visible.
+ */
+void ShowSmallMapIndustries()
+{
+	SmallMapWindow *w = (SmallMapWindow *)FindWindowById(WindowClass::SmallMap, 0);
+	if (w == nullptr) {
+		w = AllocateWindowDescFront<SmallMapWindow>(_smallmap_desc, 0);
+	}
+	if (w != nullptr) {
+		w->SwitchMapType(SmallMapType::Industries);
+		SmallMapWindow::show_ind_names = true;
+		w->SetWidgetLoweredState(WID_SM_SHOW_IND_NAMES, true);
+		w->SetDirty();
+	}
 }
 
 /**

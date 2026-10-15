@@ -243,6 +243,11 @@ struct Town : TownPool::PoolItem<&_town_pool> {
 		return Town::Get(GetTownIndex(tile));
 	}
 
+	/**
+	 * Get town of tile if it is valid.
+	 * @param tile The tile to query.
+	 * @return Pointer to Town if valid, nullptr otherwise.
+	 */
 	static inline Town *GetByTileIfValid(TileIndex tile)
 	{
 		TownID index = GetTownIndex(tile);

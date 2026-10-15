@@ -340,7 +340,7 @@ static void DrawTile_Industry(TileInfo *ti)
 	Colours colour = Colours::Grey;
 
 	if (ActiveSnapshotScope::IsActive()) {
-		const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshot(ActiveSnapshotScope::GetCurrentSide(), ind_id);
+		const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshotAtTile(ActiveSnapshotScope::GetCurrentSide(), ti->tile);
 		if (is != nullptr) {
 			colour = is->colour;
 		}
@@ -502,7 +502,7 @@ static void GetTileDesc_Industry(TileIndex tile, TileDesc &td)
 	Owner owner = OWNER_NONE;
 
 	if (ActiveSnapshotScope::IsActive()) {
-		const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshot(ActiveSnapshotScope::GetCurrentSide(), ind_id);
+		const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshotAtTile(ActiveSnapshotScope::GetCurrentSide(), tile);
 		if (is != nullptr) {
 			type = is->type;
 			owner = is->owner;

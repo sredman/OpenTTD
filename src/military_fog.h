@@ -44,6 +44,7 @@ struct TownSnapshot {
 
 /** Stored stationary snapshot of an industry. */
 struct IndustrySnapshot {
+	uint32_t handle = 0;               ///< Unique side-local stationary snapshot handle.
 	IndustryType type = 0;              ///< Industry type ID.
 	TileIndex location = INVALID_TILE; ///< Industry location center/origin tile.
 	uint8_t prod_level = 0;            ///< Last-observed production level.
@@ -51,6 +52,7 @@ struct IndustrySnapshot {
 	Colours colour = Colours::Grey;    ///< Industry colour for map drawing.
 	std::string name{};                ///< Last-observed industry name.
 	bool exists = false;               ///< Whether the industry existed when last observed.
+	std::vector<TileIndex> observed_tiles{}; ///< Observed footprint tiles belonging to this snapshot.
 };
 
 /** Stored internally remembered enemy contact. */
@@ -67,12 +69,14 @@ struct MilitaryContact {
 struct SideIntelligence {
 	std::vector<uint8_t> is_scouted;                      ///< 1 if explored at least once, 0 if never scouted.
 	std::vector<uint8_t> currently_visible;               ///< 1 if currently in scouting radius, 0 otherwise.
+	std::vector<uint32_t> tile_to_industry_handle;        ///< Map from TileIndex.base() to snapshot handle (0 = none).
 	std::unique_ptr<Tile::TileBase[]> base_tiles;         ///< Stationary snapshot of TileBase data.
 	std::unique_ptr<Tile::TileExtended[]> extended_tiles; ///< Stationary snapshot of TileExtended data.
 	std::vector<TownSnapshot> town_snapshots;             ///< Snapshots of towns indexed by TownID.
-	std::vector<IndustrySnapshot> industry_snapshots;     ///< Snapshots of industries indexed by IndustryID.
+	std::vector<IndustrySnapshot> industry_snapshots;     ///< Snapshots of industries known to this side.
 	std::vector<MilitaryContact> contacts;                ///< Known enemy contacts.
 	uint32_t never_scouted_count = 0;                     ///< Count of never-scouted tiles.
+	uint32_t next_industry_handle = 1;                    ///< Next stationary handle to allocate.
 
 	/**
 	 * Allocate memory structures for a given map size.
@@ -249,6 +253,30 @@ public:
 	 * @return Pointer to snapshot, or nullptr if not available.
 	 */
 	static const TownSnapshot *GetTownSnapshot(uint8_t side, TownID town);
+
+	/**
+	 * Get stored snapshot of an industry for a specific side by tile location.
+	 * @param side Side index.
+	 * @param tile Tile to query.
+	 * @return Pointer to snapshot, or nullptr if not available.
+	 */
+	static const IndustrySnapshot *GetIndustrySnapshotAtTile(uint8_t side, TileIndex tile);
+
+	/**
+	 * Get stored snapshot of an industry for a specific side by stationary handle.
+	 * @param side Side index.
+	 * @param handle Stationary industry handle.
+	 * @return Pointer to snapshot, or nullptr if not available.
+	 */
+	static const IndustrySnapshot *GetIndustrySnapshotByHandle(uint8_t side, uint32_t handle);
+
+	/**
+	 * Get stored snapshot of an industry for a specific side by root/origin location.
+	 * @param side Side index.
+	 * @param location Industry root tile location.
+	 * @return Pointer to snapshot, or nullptr if not available.
+	 */
+	static const IndustrySnapshot *GetIndustrySnapshotAtLocation(uint8_t side, TileIndex location);
 
 	/**
 	 * Get stored snapshot of an industry for a specific side.

@@ -33,6 +33,11 @@ struct Depot : DepotPool::PoolItem<&_depot_pool> {
 		return Depot::Get(GetDepotIndex(tile));
 	}
 
+	/**
+	 * Get depot at tile if it is valid.
+	 * @param tile The tile to query.
+	 * @return Pointer to Depot if valid, nullptr otherwise.
+	 */
 	static inline Depot *GetByTileIfValid(TileIndex tile)
 	{
 		DepotID index = GetDepotIndex(tile);

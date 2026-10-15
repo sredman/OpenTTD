@@ -26,6 +26,11 @@ static std::array<uint8_t, MAX_COMPANIES> _company_intel_side{};
 /** Intelligence state for each military side. */
 static std::array<SideIntelligence, MAX_MILITARY_SIDES> _side_intelligence{};
 
+/**
+ * Get safe cached name of an industry without triggering unloaded string table assertion in headless/test environments.
+ * @param i The industry to query.
+ * @return The cached industry name, or empty string.
+ */
 static std::string GetSafeIndustryName(const Industry *i)
 {
 	if (i == nullptr) return "";
@@ -41,24 +46,28 @@ void SideIntelligence::Allocate(size_t map_size)
 {
 	this->is_scouted.assign(map_size, 0);
 	this->currently_visible.assign(map_size, 0);
+	this->tile_to_industry_handle.assign(map_size, 0);
 	this->base_tiles = std::make_unique<Tile::TileBase[]>(map_size);
 	this->extended_tiles = std::make_unique<Tile::TileExtended[]>(map_size);
 	this->town_snapshots.clear();
 	this->industry_snapshots.clear();
 	this->contacts.clear();
 	this->never_scouted_count = static_cast<uint32_t>(map_size);
+	this->next_industry_handle = 1;
 }
 
 void SideIntelligence::Reset()
 {
 	this->is_scouted.clear();
 	this->currently_visible.clear();
+	this->tile_to_industry_handle.clear();
 	this->base_tiles.reset();
 	this->extended_tiles.reset();
 	this->town_snapshots.clear();
 	this->industry_snapshots.clear();
 	this->contacts.clear();
 	this->never_scouted_count = 0;
+	this->next_industry_handle = 1;
 }
 
 bool MilitaryFog::IsActive()
@@ -109,13 +118,12 @@ void MilitaryFog::Initialize()
 			ts.exists = true;
 		}
 
-		/* Snapshot starting industries */
-		_side_intelligence[s].industry_snapshots.resize(Industry::GetPoolSize());
+		/* Snapshot starting industries with location-anchored handles and footprint tiles */
+		_side_intelligence[s].industry_snapshots.clear();
 		for (const Industry *i : Industry::Iterate()) {
-			if (_side_intelligence[s].industry_snapshots.size() <= i->index.base()) {
-				_side_intelligence[s].industry_snapshots.resize(i->index.base() + 64);
-			}
-			IndustrySnapshot &is = _side_intelligence[s].industry_snapshots[i->index.base()];
+			uint32_t handle = _side_intelligence[s].next_industry_handle++;
+			IndustrySnapshot is;
+			is.handle = handle;
 			is.type = i->type;
 			is.location = i->location.tile;
 			is.prod_level = i->prod_level;
@@ -123,6 +131,18 @@ void MilitaryFog::Initialize()
 			is.colour = i->random_colour;
 			is.name = GetSafeIndustryName(i);
 			is.exists = true;
+
+			for (TileIndex cur_tile : i->location) {
+				if (IsTileType(cur_tile, TileType::Industry) && GetIndustryIndex(cur_tile) == i->index) {
+					is.observed_tiles.push_back(cur_tile);
+					_side_intelligence[s].tile_to_industry_handle[cur_tile.base()] = handle;
+				}
+			}
+			if (is.observed_tiles.empty() && IsValidTile(i->location.tile)) {
+				is.observed_tiles.push_back(i->location.tile);
+				_side_intelligence[s].tile_to_industry_handle[i->location.tile.base()] = handle;
+			}
+			_side_intelligence[s].industry_snapshots.push_back(std::move(is));
 		}
 
 		/* All tiles begin under fog of war as never-scouted */
@@ -268,26 +288,51 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 
 	/* Refresh industry snapshot if tile belongs to an industry */
 	if (IsTileType(tile, TileType::Industry)) {
-		IndustryID iid = GetIndustryIndex(tile);
-		if (Industry::IsValidID(iid)) {
-			const Industry *i = Industry::Get(iid);
-			if (intel.industry_snapshots.size() <= iid.base()) {
-				intel.industry_snapshots.resize(iid.base() + 64);
+		const Industry *i = Industry::GetByTileIfValid(tile);
+		if (i != nullptr) {
+			TileIndex root = i->location.tile;
+			IndustrySnapshot *snap = nullptr;
+			for (auto &existing : intel.industry_snapshots) {
+				if (existing.exists && existing.location == root) {
+					snap = &existing;
+					break;
+				}
 			}
-			IndustrySnapshot &is = intel.industry_snapshots[iid.base()];
-			is.type = i->type;
-			is.location = i->location.tile;
-			is.prod_level = i->prod_level;
-			is.owner = i->owner;
-			is.colour = i->random_colour;
-			is.name = GetSafeIndustryName(i);
-			is.exists = true;
+			if (snap == nullptr) {
+				uint32_t handle = intel.next_industry_handle++;
+				intel.industry_snapshots.emplace_back();
+				snap = &intel.industry_snapshots.back();
+				snap->handle = handle;
+				snap->location = root;
+			}
+			snap->type = i->type;
+			snap->prod_level = i->prod_level;
+			snap->owner = i->owner;
+			snap->colour = i->random_colour;
+			snap->name = GetSafeIndustryName(i);
+			snap->exists = true;
+
+			if (std::find(snap->observed_tiles.begin(), snap->observed_tiles.end(), tile) == snap->observed_tiles.end()) {
+				snap->observed_tiles.push_back(tile);
+			}
+			intel.tile_to_industry_handle[tile.base()] = snap->handle;
 		}
 	} else {
-		/* If this tile previously held an industry in snapshot, but no longer has an industry */
-		for (auto &is : intel.industry_snapshots) {
-			if (is.exists && is.location == tile) {
-				is.exists = false;
+		/* Tile is no longer an industry */
+		uint32_t prev_handle = (tile.base() < intel.tile_to_industry_handle.size()) ? intel.tile_to_industry_handle[tile.base()] : 0;
+		if (prev_handle != 0) {
+			intel.tile_to_industry_handle[tile.base()] = 0;
+			for (auto &existing : intel.industry_snapshots) {
+				if (existing.handle == prev_handle) {
+					auto it = std::find(existing.observed_tiles.begin(), existing.observed_tiles.end(), tile);
+					if (it != existing.observed_tiles.end()) {
+						existing.observed_tiles.erase(it);
+					}
+					if (tile == existing.location || existing.observed_tiles.empty()) {
+						existing.exists = false;
+					}
+					break;
+				}
 			}
 		}
 	}
@@ -324,7 +369,7 @@ void MilitaryFog::UpdateAircraftScouting(DisasterVehicle *aircraft)
 		}
 	}
 
-	/* Also explicitly refresh town and industry snapshots if their center/location is within radius */
+	/* Also explicitly refresh town snapshots if their center/location is within radius */
 	for (const Town *t : Town::Iterate()) {
 		if (DistanceSquare(t->xy, center_tile) <= static_cast<uint>(r * r)) {
 			if (intel.town_snapshots.size() <= t->index.base()) {
@@ -337,31 +382,6 @@ void MilitaryFog::UpdateAircraftScouting(DisasterVehicle *aircraft)
 			ts.xy = t->xy;
 			ts.larger_town = t->larger_town;
 			ts.exists = true;
-		}
-	}
-
-	for (const Industry *i : Industry::Iterate()) {
-		if (DistanceSquare(i->location.tile, center_tile) <= static_cast<uint>(r * r)) {
-			if (intel.industry_snapshots.size() <= i->index.base()) {
-				intel.industry_snapshots.resize(i->index.base() + 64);
-			}
-			IndustrySnapshot &is = intel.industry_snapshots[i->index.base()];
-			is.type = i->type;
-			is.location = i->location.tile;
-			is.prod_level = i->prod_level;
-			is.owner = i->owner;
-			is.colour = i->random_colour;
-			is.name = GetSafeIndustryName(i);
-			is.exists = true;
-		}
-	}
-
-	/* Clear snapshots of industries whose location tile is within radius and confirmed deleted */
-	for (auto &is : intel.industry_snapshots) {
-		if (is.exists && DistanceSquare(is.location, center_tile) <= static_cast<uint>(r * r)) {
-			if (!IsTileType(is.location, TileType::Industry) || !Industry::IsValidID(GetIndustryIndex(is.location))) {
-				is.exists = false;
-			}
 		}
 	}
 
@@ -576,12 +596,44 @@ const TownSnapshot *MilitaryFog::GetTownSnapshot(uint8_t side, TownID town)
 	return &snaps[town.base()];
 }
 
+const IndustrySnapshot *MilitaryFog::GetIndustrySnapshotAtTile(uint8_t side, TileIndex tile)
+{
+	if (!_military_fog_active || side >= MAX_MILITARY_SIDES) return nullptr;
+	const auto &intel = _side_intelligence[side];
+	if (tile.base() >= intel.tile_to_industry_handle.size()) return nullptr;
+	uint32_t handle = intel.tile_to_industry_handle[tile.base()];
+	if (handle == 0) return nullptr;
+	return GetIndustrySnapshotByHandle(side, handle);
+}
+
+const IndustrySnapshot *MilitaryFog::GetIndustrySnapshotByHandle(uint8_t side, uint32_t handle)
+{
+	if (!_military_fog_active || side >= MAX_MILITARY_SIDES || handle == 0) return nullptr;
+	const auto &snaps = _side_intelligence[side].industry_snapshots;
+	for (const auto &is : snaps) {
+		if (is.exists && is.handle == handle) return &is;
+	}
+	return nullptr;
+}
+
+const IndustrySnapshot *MilitaryFog::GetIndustrySnapshotAtLocation(uint8_t side, TileIndex location)
+{
+	if (!_military_fog_active || side >= MAX_MILITARY_SIDES || location == INVALID_TILE) return nullptr;
+	const auto &snaps = _side_intelligence[side].industry_snapshots;
+	for (const auto &is : snaps) {
+		if (is.exists && is.location == location) return &is;
+	}
+	return nullptr;
+}
+
 const IndustrySnapshot *MilitaryFog::GetIndustrySnapshot(uint8_t side, IndustryID industry)
 {
 	if (!_military_fog_active || side >= MAX_MILITARY_SIDES) return nullptr;
-	const auto &snaps = _side_intelligence[side].industry_snapshots;
-	if (industry.base() >= snaps.size() || !snaps[industry.base()].exists) return nullptr;
-	return &snaps[industry.base()];
+	if (Industry::IsValidID(industry)) {
+		const Industry *ind = Industry::Get(industry);
+		return GetIndustrySnapshotAtLocation(side, ind->location.tile);
+	}
+	return nullptr;
 }
 
 void MilitaryFog::ReconstructVisibility(bool refresh_unseen)
@@ -742,6 +794,11 @@ void MilitaryFog::Save()
 		}
 
 		/* Save industry_snapshots */
+		SlWriteByte(GB(intel.next_industry_handle, 24, 8));
+		SlWriteByte(GB(intel.next_industry_handle, 16, 8));
+		SlWriteByte(GB(intel.next_industry_handle, 8, 8));
+		SlWriteByte(GB(intel.next_industry_handle, 0, 8));
+
 		uint32_t num_ind = static_cast<uint32_t>(intel.industry_snapshots.size());
 		SlWriteByte(GB(num_ind, 24, 8));
 		SlWriteByte(GB(num_ind, 16, 8));
@@ -750,6 +807,11 @@ void MilitaryFog::Save()
 		for (const auto &is : intel.industry_snapshots) {
 			SlWriteByte(is.exists ? 1 : 0);
 			if (is.exists) {
+				SlWriteByte(GB(is.handle, 24, 8));
+				SlWriteByte(GB(is.handle, 16, 8));
+				SlWriteByte(GB(is.handle, 8, 8));
+				SlWriteByte(GB(is.handle, 0, 8));
+
 				SlWriteByte(is.type);
 
 				SlWriteByte(GB(is.location.base(), 24, 8));
@@ -766,6 +828,18 @@ void MilitaryFog::Save()
 				SlWriteByte(GB(name_len, 0, 8));
 				for (char ch : is.name) {
 					SlWriteByte(static_cast<uint8_t>(ch));
+				}
+
+				uint32_t num_observed = static_cast<uint32_t>(is.observed_tiles.size());
+				SlWriteByte(GB(num_observed, 24, 8));
+				SlWriteByte(GB(num_observed, 16, 8));
+				SlWriteByte(GB(num_observed, 8, 8));
+				SlWriteByte(GB(num_observed, 0, 8));
+				for (TileIndex t : is.observed_tiles) {
+					SlWriteByte(GB(t.base(), 24, 8));
+					SlWriteByte(GB(t.base(), 16, 8));
+					SlWriteByte(GB(t.base(), 8, 8));
+					SlWriteByte(GB(t.base(), 0, 8));
 				}
 			}
 		}
@@ -892,6 +966,12 @@ void MilitaryFog::Load()
 			}
 		}
 
+		uint32_t next_h = (static_cast<uint32_t>(SlReadByte()) << 24);
+		next_h |= (static_cast<uint32_t>(SlReadByte()) << 16);
+		next_h |= (static_cast<uint32_t>(SlReadByte()) << 8);
+		next_h |= static_cast<uint32_t>(SlReadByte());
+		intel.next_industry_handle = next_h;
+
 		uint32_t num_ind = (static_cast<uint32_t>(SlReadByte()) << 24);
 		num_ind |= (static_cast<uint32_t>(SlReadByte()) << 16);
 		num_ind |= (static_cast<uint32_t>(SlReadByte()) << 8);
@@ -901,6 +981,12 @@ void MilitaryFog::Load()
 			IndustrySnapshot &is = intel.industry_snapshots[j];
 			is.exists = (SlReadByte() != 0);
 			if (is.exists) {
+				uint32_t h = (static_cast<uint32_t>(SlReadByte()) << 24);
+				h |= (static_cast<uint32_t>(SlReadByte()) << 16);
+				h |= (static_cast<uint32_t>(SlReadByte()) << 8);
+				h |= static_cast<uint32_t>(SlReadByte());
+				is.handle = h;
+
 				is.type = SlReadByte();
 
 				uint32_t loc = (static_cast<uint32_t>(SlReadByte()) << 24);
@@ -919,8 +1005,33 @@ void MilitaryFog::Load()
 				for (uint16_t k = 0; k < name_len; k++) {
 					is.name[k] = static_cast<char>(SlReadByte());
 				}
+
+				uint32_t num_observed = (static_cast<uint32_t>(SlReadByte()) << 24);
+				num_observed |= (static_cast<uint32_t>(SlReadByte()) << 16);
+				num_observed |= (static_cast<uint32_t>(SlReadByte()) << 8);
+				num_observed |= static_cast<uint32_t>(SlReadByte());
+				is.observed_tiles.resize(num_observed);
+				for (uint32_t ot = 0; ot < num_observed; ot++) {
+					uint32_t t = (static_cast<uint32_t>(SlReadByte()) << 24);
+					t |= (static_cast<uint32_t>(SlReadByte()) << 16);
+					t |= (static_cast<uint32_t>(SlReadByte()) << 8);
+					t |= static_cast<uint32_t>(SlReadByte());
+					is.observed_tiles[ot] = TileIndex{t};
+				}
 			} else {
 				is = IndustrySnapshot{};
+			}
+		}
+
+		/* Reconstruct tile_to_industry_handle from snapshots */
+		intel.tile_to_industry_handle.assign(map_size, 0);
+		for (const auto &is : intel.industry_snapshots) {
+			if (is.exists) {
+				for (TileIndex t : is.observed_tiles) {
+					if (t.base() < map_size) {
+						intel.tile_to_industry_handle[t.base()] = is.handle;
+					}
+				}
 			}
 		}
 	}
@@ -954,11 +1065,12 @@ struct MFOGChunkHandler : ChunkHandler {
 					}
 				}
 
+				len += 4; // next_industry_handle
 				len += 4; // num_industries
 				for (const auto &is : intel.industry_snapshots) {
 					len += 1; // exists
 					if (is.exists) {
-						len += 1 + 4 + 1 + 1 + 1 + 2 + is.name.size();
+						len += 4 + 1 + 4 + 1 + 1 + 1 + 2 + is.name.size() + 4 + is.observed_tiles.size() * 4;
 					}
 				}
 			}

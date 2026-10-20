@@ -13,6 +13,7 @@
 #include "../depot_base.h"
 #include "../network/network.h"
 #include "../gfxinit.h"
+#include "../video/video_driver.hpp"
 #include "../viewport_func.h"
 #include "../viewport_kdtree.h"
 #include "../industry.h"
@@ -55,6 +56,7 @@
 #include "../order_backup.h"
 #include "../error.h"
 #include "../disaster_vehicle.h"
+#include "../military_fog.h"
 #include "../ship.h"
 #include "../timer/timer.h"
 #include "../timer/timer_game_calendar.h"
@@ -244,7 +246,7 @@ static void InitializeWindowsAndCaches()
 {
 	/* Initialize windows */
 	ResetWindowSystem();
-	SetupColoursAndInitialWindow();
+	if (VideoDriver::GetInstance() != nullptr) SetupColoursAndInitialWindow();
 
 	/* Update coordinates of the signs. */
 	ClearAllCachedNames();
@@ -3498,4 +3500,5 @@ void ReloadNewGRFData()
 	/* redraw the whole screen */
 	MarkWholeScreenDirty();
 	CheckTrainsLengths();
+	MilitaryFog::ReconstructVisibility(false);
 }

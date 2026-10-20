@@ -32,6 +32,8 @@
 #include "newgrf_profiling.h"
 #include "3rdparty/monocypher/monocypher.h"
 
+#include "military_fog.h"
+
 #include "safeguards.h"
 
 extern TileIndex _cur_tileloop_tile;
@@ -95,6 +97,8 @@ void InitializeGame(uint size_x, uint size_y, bool reset_date, bool reset_settin
 	 * related to the new game we're about to start/load. */
 	UnInitWindowSystem();
 
+	MilitaryFog::Reset();
+
 	Map::Allocate(size_x, size_y);
 
 	_pause_mode = {};
@@ -134,6 +138,7 @@ void InitializeGame(uint size_x, uint size_y, bool reset_date, bool reset_settin
 	InitializeMusic();
 
 	InitializeVehicles();
+	InitializeStations();
 
 	InitNewsItemStructs();
 	InitializeLandscape();

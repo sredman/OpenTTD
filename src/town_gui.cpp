@@ -50,6 +50,7 @@
 #include "graph_gui.h"
 
 #include "widgets/town_widget.h"
+#include "military_fog.h"
 
 #include "table/strings.h"
 
@@ -393,7 +394,25 @@ public:
 
 		Rect tr = r.Shrink(WidgetDimensions::scaled.framerect);
 
-		DrawString(tr, GetString(STR_TOWN_VIEW_POPULATION_HOUSES, this->town->cache.population, this->town->cache.num_houses));
+		uint32_t pop = this->town->cache.population;
+		uint32_t houses = this->town->cache.num_houses;
+		bool is_stale = false;
+		if (MilitaryFog::IsActive()) {
+			if (!MilitaryFog::IsTileCurrentlyVisibleForLocal(this->town->xy)) {
+				const TownSnapshot *ts = MilitaryFog::GetTownSnapshot(MilitaryFog::GetLocalIntelligenceSide(), this->town->index);
+				if (ts != nullptr && ts->exists) {
+					pop = ts->population;
+					houses = ts->num_houses;
+					is_stale = true;
+				}
+			}
+		}
+
+		if (is_stale) {
+			DrawString(tr, GetString(STR_TOWN_VIEW_POPULATION_HOUSES, pop, houses) + " (Stale snapshot - Fog of War)");
+		} else {
+			DrawString(tr, GetString(STR_TOWN_VIEW_POPULATION_HOUSES, pop, houses));
+		}
 		tr.top += GetCharacterHeight(FontSize::Normal);
 
 		StringID str_last_period = TimerGameEconomy::UsingWallclockUnits() ? STR_TOWN_VIEW_CARGO_LAST_MINUTE_MAX : STR_TOWN_VIEW_CARGO_LAST_MONTH_MAX;
@@ -744,6 +763,10 @@ private:
 			this->towns.reserve(Town::GetNumItems());
 
 			for (const Town *t : Town::Iterate()) {
+				if (MilitaryFog::IsActive()) {
+					const TownSnapshot *ts = MilitaryFog::GetTownSnapshot(MilitaryFog::GetLocalIntelligenceSide(), t->index);
+					if (ts == nullptr || !ts->exists) continue;
+				}
 				if (this->string_filter.IsEmpty()) {
 					this->towns.push_back(t);
 					continue;
@@ -772,6 +795,17 @@ private:
 	{
 		uint32_t a_population = a->cache.population;
 		uint32_t b_population = b->cache.population;
+		if (MilitaryFog::IsActive()) {
+			uint8_t side = MilitaryFog::GetLocalIntelligenceSide();
+			if (!MilitaryFog::IsTileCurrentlyVisible(side, a->xy)) {
+				const TownSnapshot *ts = MilitaryFog::GetTownSnapshot(side, a->index);
+				if (ts != nullptr && ts->exists) a_population = ts->population;
+			}
+			if (!MilitaryFog::IsTileCurrentlyVisible(side, b->xy)) {
+				const TownSnapshot *ts = MilitaryFog::GetTownSnapshot(side, b->index);
+				if (ts != nullptr && ts->exists) b_population = ts->population;
+			}
+		}
 		if (a_population == b_population) return TownDirectoryWindow::TownNameSorter(a, b, filter);
 		return a_population < b_population;
 	}
@@ -879,7 +913,12 @@ public:
 						DrawSprite(icon, PAL_NONE, icon_x, tr.top + (this->resize.step_height - icon_size.height) / 2);
 					}
 
-					DrawString(tr.left, tr.right, tr.top + (this->resize.step_height - GetCharacterHeight(FontSize::Normal)) / 2, GetTownString(t, t->cache.population));
+					uint64_t pop = t->cache.population;
+					if (MilitaryFog::IsActive() && !MilitaryFog::IsTileCurrentlyVisibleForLocal(t->xy)) {
+						const TownSnapshot *ts = MilitaryFog::GetTownSnapshot(MilitaryFog::GetLocalIntelligenceSide(), t->index);
+						if (ts != nullptr && ts->exists) pop = ts->population;
+					}
+					DrawString(tr.left, tr.right, tr.top + (this->resize.step_height - GetCharacterHeight(FontSize::Normal)) / 2, GetTownString(t, pop));
 
 					tr.top += this->resize.step_height;
 				}

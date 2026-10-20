@@ -337,8 +337,9 @@ void GfxLoadSprites()
 	Debug(Facility::Sprite, Severity::Warning, "Loading sprite set {}", _settings_game.game_creation.landscape);
 
 	SwitchNewGRFBlitter();
-	VideoDriver::GetInstance()->ClearSystemSprites();
+	if (VideoDriver::GetInstance() != nullptr) VideoDriver::GetInstance()->ClearSystemSprites();
 	FontCache::ClearFontCaches(FONTSIZES_ALL);
+	if (BaseGraphics::GetUsedSet() == nullptr || BaseGraphics::GetUsedSet()->files.empty()) return;
 	GfxInitSpriteMem();
 	LoadSpriteTables();
 	GfxInitPalettes();

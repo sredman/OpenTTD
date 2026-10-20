@@ -58,6 +58,7 @@
 #include "road_cmd.h"
 #include "terraform_cmd.h"
 #include "tunnelbridge_cmd.h"
+#include "military_fog.h"
 #include "clear_map.h"
 #include "tree_map.h"
 #include "map_func.h"
@@ -306,7 +307,7 @@ static Foundation GetFoundation_Town(TileIndex tile, Slope tileh)
 	if (hid >= NEW_HOUSE_OFFSET) {
 		const HouseSpec *hs = HouseSpec::Get(hid);
 		if (hs->callback_mask.Test(HouseCallbackMask::DrawFoundations)) {
-			uint32_t callback_res = GetHouseCallback(CBID_HOUSE_DRAW_FOUNDATIONS, 0, 0, hid, Town::GetByTile(tile), tile);
+			uint32_t callback_res = GetHouseCallback(CBID_HOUSE_DRAW_FOUNDATIONS, 0, 0, hid, Town::GetByTileIfValid(tile), tile);
 			if (callback_res != CALLBACK_FAILED && !ConvertBooleanCallback(hs->grf_prop.grffile, CBID_HOUSE_DRAW_FOUNDATIONS, callback_res)) return Foundation::None;
 		}
 	}
@@ -406,6 +407,9 @@ void UpdateAllTownVirtCoords()
 {
 	for (Town *t : Town::Iterate()) {
 		t->UpdateVirtCoord();
+	}
+	if (MilitaryFog::IsActive()) {
+		MilitaryFog::UpdateAllTownSnapshotVirtCoords();
 	}
 }
 
@@ -820,7 +824,7 @@ void AddAcceptedCargoOfHouse(TileIndex tile, HouseID house, const HouseSpec *hs,
 static void AddAcceptedCargo_Town(TileIndex tile, CargoArray &acceptance, CargoTypes &always_accepted)
 {
 	HouseID house = GetHouseType(tile);
-	AddAcceptedCargoOfHouse(tile, house, HouseSpec::Get(house), Town::GetByTile(tile), acceptance, always_accepted);
+	AddAcceptedCargoOfHouse(tile, house, HouseSpec::Get(house), Town::GetByTileIfValid(tile), acceptance, always_accepted);
 }
 
 /**
@@ -851,7 +855,7 @@ static void GetTileDesc_Town(TileIndex tile, TileDesc &td)
 	td.town_can_upgrade = !IsHousePlayerProtected(tile) && !hs->extra_flags.Test(HouseExtraFlag::BuildingIsProtected);
 
 	std::array<int32_t, 1> regs100;
-	uint16_t callback_res = GetHouseCallback(CBID_HOUSE_CUSTOM_NAME, house_completed ? 1 : 0, 0, house, Town::GetByTile(tile), tile, regs100);
+	uint16_t callback_res = GetHouseCallback(CBID_HOUSE_CUSTOM_NAME, house_completed ? 1 : 0, 0, house, Town::GetByTileIfValid(tile), tile, regs100);
 	if (callback_res != CALLBACK_FAILED && callback_res != 0x400) {
 		StringID new_name = STR_NULL;
 		if (callback_res == 0x40F) {

@@ -51,6 +51,7 @@
 #include "core/string_consumer.hpp"
 
 #include "widgets/industry_widget.h"
+#include "military_fog.h"
 
 #include "table/strings.h"
 
@@ -887,6 +888,11 @@ public:
 		/* Use all the available space past the rect, so that we can enlarge the window if needed. */
 		ir.bottom = INT_MAX;
 
+		if (MilitaryFog::IsActive() && !MilitaryFog::IsTileCurrentlyVisibleForLocal(i->location.tile)) {
+			DrawString(ir, "(Stale snapshot - Fog of War)");
+			ir.top += GetCharacterHeight(FontSize::Normal) + WidgetDimensions::scaled.vsep_wide;
+		}
+
 		if (i->prod_level == PRODLEVEL_CLOSURE) {
 			DrawString(ir, STR_INDUSTRY_VIEW_INDUSTRY_ANNOUNCED_CLOSURE);
 			ir.top += GetCharacterHeight(FontSize::Normal) + WidgetDimensions::scaled.vsep_wide;
@@ -1432,6 +1438,10 @@ protected:
 			this->industries.reserve(Industry::GetNumItems());
 
 			for (const Industry *i : Industry::Iterate()) {
+				if (MilitaryFog::IsActive()) {
+					const IndustrySnapshot *is = MilitaryFog::GetIndustrySnapshot(MilitaryFog::GetLocalIntelligenceSide(), i->index);
+					if (is == nullptr || !is->exists) continue;
+				}
 				if (this->string_filter.IsEmpty()) {
 					this->industries.push_back(i);
 					continue;

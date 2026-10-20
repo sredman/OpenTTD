@@ -90,7 +90,9 @@ static bool SetBankSource(MixerChannel *mc, SoundEntry *sound, SoundID sound_id)
 void InitializeSound()
 {
 	Debug(Facility::Misc, Severity::Error, "Loading sound effects...");
-	OpenBankFile(BaseSounds::GetUsedSet()->files[0].filename);
+	const auto *set = BaseSounds::GetUsedSet();
+	if (set == nullptr || set->files.empty()) return;
+	OpenBankFile(set->files[0].filename);
 }
 
 

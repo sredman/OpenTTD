@@ -13,6 +13,8 @@
 #include "error_func.h"
 #include "pathfinder/water_regions.h"
 
+#include "military_fog.h"
+
 #include "safeguards.h"
 
 /* static */ uint Map::log_x;     ///< 2^_map_log_x == _map_size_x
@@ -26,6 +28,8 @@
 
 /* static */ std::unique_ptr<Tile::TileBase[]> Tile::base_tiles; ///< Base tiles of the map
 /* static */ std::unique_ptr<Tile::TileExtended[]> Tile::extended_tiles; ///< Extended tiles of the map
+/* static */ Tile::TileBase *Tile::active_base_tiles = nullptr;
+/* static */ Tile::TileExtended *Tile::active_extended_tiles = nullptr;
 
 
 /**
@@ -44,6 +48,8 @@
 		FatalError("Invalid map size");
 	}
 
+	MilitaryFog::Reset();
+
 	Debug(Facility::Map, Severity::Error, "Allocating map of size {}x{}", size_x, size_y);
 
 	Map::log_x = FindFirstBit(size_x);
@@ -55,6 +61,8 @@
 
 	Tile::base_tiles = std::make_unique<Tile::TileBase[]>(Map::size);
 	Tile::extended_tiles = std::make_unique<Tile::TileExtended[]>(Map::size);
+	Tile::active_base_tiles = Tile::base_tiles.get();
+	Tile::active_extended_tiles = Tile::extended_tiles.get();
 
 	AllocateWaterRegions();
 }

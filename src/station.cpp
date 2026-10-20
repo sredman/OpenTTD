@@ -49,6 +49,13 @@ void RebuildStationKdtree()
 }
 
 
+uint32_t _next_station_instance_id = 0;
+
+void InitializeStations()
+{
+	_next_station_instance_id = 0;
+}
+
 BaseStation::~BaseStation()
 {
 	if (CleaningPool()) return;

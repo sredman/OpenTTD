@@ -2928,7 +2928,7 @@ static void GetTileDesc_Rail(TileIndex tile, TileDesc &td)
 			break;
 		}
 
-		case RailTileType::Depot:
+		case RailTileType::Depot: {
 			td.str = STR_LAI_RAIL_DESCRIPTION_TRAIN_DEPOT;
 			if (_settings_game.vehicle.train_acceleration_model != AccelerationModel::Original) {
 				if (td.rail_speed > 0) {
@@ -2937,8 +2937,10 @@ static void GetTileDesc_Rail(TileIndex tile, TileDesc &td)
 					td.rail_speed = 61;
 				}
 			}
-			td.build_date = Depot::GetByTile(tile)->build_date;
+			Depot *d = Depot::GetByTileIfValid(tile);
+			if (d != nullptr) td.build_date = d->build_date;
 			break;
+		}
 
 		default:
 			NOT_REACHED();

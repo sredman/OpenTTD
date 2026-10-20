@@ -10,6 +10,8 @@
 #include "../stdafx.h"
 
 #include "saveload.h"
+#include "saveload_internal.h"
+#include "saveload_error.hpp"
 #include "compat/station_sl_compat.h"
 
 #include "../station_base.h"
@@ -112,6 +114,14 @@ void MoveBuoysToWaypoints()
 
 void AfterLoadStations()
 {
+	for (BaseStation *st : BaseStation::Iterate()) {
+		if (st->instance_id == 0) {
+			st->instance_id = ++_next_station_instance_id;
+		} else {
+			_next_station_instance_id = std::max(_next_station_instance_id, st->instance_id);
+		}
+	}
+
 	/* Update the speclists of all stations to point to the currently loaded custom stations. */
 	for (BaseStation *st : BaseStation::Iterate()) {
 		for (auto &sm : GetStationSpecList<StationSpec>(st)) {
@@ -592,6 +602,7 @@ public:
 		SaveLoad::Variable<VarFileType::U8>("owner", SLE_OBJECT_ADDRESS(BaseStation, owner)),
 		SaveLoad::Variable<VarFileType::U8>("facilities", SLE_OBJECT_ADDRESS(BaseStation, facilities)),
 		SaveLoad::Variable<VarFileType::I32>("build_date", SLE_OBJECT_ADDRESS(BaseStation, build_date)),
+		SaveLoad::Variable<VarFileType::U32>("instance_id", SLE_OBJECT_ADDRESS(BaseStation, instance_id)),
 
 		/* Used by newstations for graphic variations */
 		SaveLoad::Variable<VarFileType::U16>("random_bits", SLE_OBJECT_ADDRESS(BaseStation, random_bits)),
@@ -800,13 +811,40 @@ struct ROADChunkHandler : ChunkHandler {
 	}
 };
 
+static const SaveLoad _station_instance_desc[] = {
+	SaveLoad::Variable<VarFileType::U32>("next_instance_id", SLE_GLOBAL_ADDRESS(_next_station_instance_id)),
+};
+
+static const SaveLoadCompatTable _station_instance_sl_compat = {};
+
+struct STINChunkHandler : ChunkHandler {
+	STINChunkHandler() : ChunkHandler("STIN", ChunkType::Table) {}
+
+	void Save() const override
+	{
+		SlTableHeader(_station_instance_desc);
+		SlSetArrayIndex(0);
+		SlGlobList(_station_instance_desc);
+	}
+
+	void Load() const override
+	{
+		const std::vector<SaveLoad> slt = SlCompatTableHeader(_station_instance_desc, _station_instance_sl_compat);
+		if (SlIterateArray() == -1) return;
+		SlGlobList(slt);
+		if (SlIterateArray() != -1) SlErrorCorrupt("Too many STIN entries");
+	}
+};
+
 static const STNSChunkHandler STNS;
 static const STNNChunkHandler STNN;
 static const ROADChunkHandler ROAD;
+static const STINChunkHandler STIN;
 static const ChunkHandlerRef station_chunk_handlers[] = {
 	STNS,
 	STNN,
 	ROAD,
+	STIN,
 };
 
 extern const ChunkHandlerTable _station_chunk_handlers(station_chunk_handlers);

@@ -31,11 +31,15 @@ struct RoadStopTileData {
 	uint8_t animation_frame = 0;
 };
 
+extern uint32_t _next_station_instance_id;
+void InitializeStations();
+
 /** Base class for all station-ish types */
 struct BaseStation : StationPool::PoolItem<&_station_pool> {
 	TileIndex xy = INVALID_TILE; ///< Base tile of the station
 	TrackedViewportSign sign{}; ///< NOSAVE: Dimensions of sign
 	uint8_t delete_ctr = 0; ///< Delete counter. If greater than 0 then it is decremented until it reaches 0; the waypoint is then is deleted.
+	uint32_t instance_id = 0; ///< Lifetime instance identifier for this station/waypoint.
 
 	std::string name{}; ///< Custom name
 	StringID string_id = INVALID_STRING_ID; ///< Default name (town area) of station
@@ -68,7 +72,7 @@ struct BaseStation : StationPool::PoolItem<&_station_pool> {
 	 * @param index The index of the station within the pool.
 	 * @param tile The location of the station sign
 	 */
-	BaseStation(StationID index, TileIndex tile) : StationPool::PoolItem<&_station_pool>(index), xy(tile) {}
+	BaseStation(StationID index, TileIndex tile) : StationPool::PoolItem<&_station_pool>(index), xy(tile), instance_id(++_next_station_instance_id) {}
 
 	/** Ensure the destructor of the sub classes are called as well. */
 	virtual ~BaseStation();

@@ -34,6 +34,17 @@ struct Depot : DepotPool::PoolItem<&_depot_pool> {
 	}
 
 	/**
+	 * Get depot at tile if it is valid.
+	 * @param tile The tile to query.
+	 * @return Pointer to Depot if valid, nullptr otherwise.
+	 */
+	static inline Depot *GetByTileIfValid(TileIndex tile)
+	{
+		DepotID index = GetDepotIndex(tile);
+		return Depot::IsValidID(index) ? Depot::Get(index) : nullptr;
+	}
+
+	/**
 	 * Is the "type" of depot the same as the given depot,
 	 * i.e. are both a rail, road or ship depots?
 	 * @param d The depot to compare to.

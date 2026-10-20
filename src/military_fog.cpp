@@ -170,6 +170,81 @@ void StationSnapshot::UpdateVirtCoord()
 	}
 }
 
+void StationSnapshot::SetTileContribution(TileIndex tile, StationFacilities fac)
+{
+	auto it = std::find(this->observed_tiles.begin(), this->observed_tiles.end(), tile);
+	if (it != this->observed_tiles.end()) {
+		size_t idx = std::distance(this->observed_tiles.begin(), it);
+		if (idx < this->tile_facilities.size()) {
+			this->tile_facilities[idx] = fac;
+		}
+	} else {
+		this->observed_tiles.push_back(tile);
+		this->tile_facilities.push_back(fac);
+	}
+	this->RecomputeAggregateFacilities();
+}
+
+void StationSnapshot::RemoveTileContribution(TileIndex tile)
+{
+	auto it = std::find(this->observed_tiles.begin(), this->observed_tiles.end(), tile);
+	if (it != this->observed_tiles.end()) {
+		size_t idx = std::distance(this->observed_tiles.begin(), it);
+		this->observed_tiles.erase(it);
+		if (idx < this->tile_facilities.size()) {
+			this->tile_facilities.erase(this->tile_facilities.begin() + idx);
+		}
+	}
+	this->RecomputeAggregateFacilities();
+}
+
+void StationSnapshot::RecomputeAggregateFacilities()
+{
+	this->facilities.Reset();
+	if (this->is_waypoint) {
+		this->facilities.Set(StationFacility::Waypoint);
+	}
+	bool has_oilrig = false;
+	for (size_t i = 0; i < this->observed_tiles.size(); ++i) {
+		if (i < this->tile_facilities.size()) {
+			this->facilities.Set(this->tile_facilities[i]);
+			if (this->tile_facilities[i].Test(StationFacility::Airport) && this->tile_facilities[i].Test(StationFacility::Dock)) {
+				has_oilrig = true;
+			}
+		}
+	}
+	this->is_oilrig = has_oilrig;
+}
+
+static StationFacilities GetTileStationFacilities(TileIndex tile)
+{
+	if (!IsTileType(tile, TileType::Station)) return StationFacilities{};
+
+	StationType st = GetStationType(tile);
+	switch (st) {
+		case StationType::Rail:
+			return StationFacility::Train;
+		case StationType::Airport:
+			return StationFacility::Airport;
+		case StationType::Truck:
+			return StationFacility::TruckStop;
+		case StationType::Bus:
+			return StationFacility::BusStop;
+		case StationType::Oilrig:
+			return {StationFacility::Airport, StationFacility::Dock};
+		case StationType::Dock:
+			return StationFacility::Dock;
+		case StationType::Buoy:
+			return StationFacility::Waypoint;
+		case StationType::RailWaypoint:
+			return StationFacility::Waypoint;
+		case StationType::RoadWaypoint:
+			return {StationFacility::BusStop, StationFacility::TruckStop};
+		default:
+			return StationFacilities{};
+	}
+}
+
 void SideIntelligence::Allocate(size_t map_size)
 {
 	this->is_scouted.assign(map_size, 0);
@@ -294,25 +369,22 @@ void MilitaryFog::Initialize()
 			ss.instance_id = st->instance_id;
 			ss.original_id = st->index;
 			ss.is_waypoint = !Station::IsExpected(st);
-			if (Station::IsExpected(st)) {
-				const Station *station = Station::From(st);
-				ss.is_oilrig = station->facilities.Test(StationFacility::Airport) && station->airport.type == AT_OILRIG;
-			}
 			ss.xy = st->xy;
 			ss.name = GetSafeStationName(st);
-			ss.facilities = st->facilities;
 			ss.owner = st->owner;
 			ss.colour = (st->owner == OWNER_NONE) ? Colours::Grey : _company_colours[st->owner];
 			ss.exists = true;
 
 			for (TileIndex cur_tile : st->spread) {
 				if (IsTileType(cur_tile, TileType::Station) && GetStationIndex(cur_tile) == st->index) {
-					ss.observed_tiles.push_back(cur_tile);
+					StationFacilities fac = GetTileStationFacilities(cur_tile);
+					ss.SetTileContribution(cur_tile, fac);
 					_side_intelligence[s].tile_to_station_handle[cur_tile.base()] = handle;
 				}
 			}
 			if (std::find(ss.observed_tiles.begin(), ss.observed_tiles.end(), st->xy) == ss.observed_tiles.end() && IsValidTile(st->xy)) {
-				ss.observed_tiles.push_back(st->xy);
+				StationFacilities fac = (IsTileType(st->xy, TileType::Station) && GetStationIndex(st->xy) == st->index) ? GetTileStationFacilities(st->xy) : StationFacilities{};
+				ss.SetTileContribution(st->xy, fac);
 				_side_intelligence[s].tile_to_station_handle[st->xy.base()] = handle;
 			}
 			ss.UpdateVirtCoord();
@@ -610,14 +682,9 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 		if (st != nullptr) {
 			TileIndex sign_xy = st->xy;
 			bool is_wp = !Station::IsExpected(st);
-			bool is_rig = false;
-			if (Station::IsExpected(st)) {
-				const Station *station = Station::From(st);
-				is_rig = station->facilities.Test(StationFacility::Airport) && station->airport.type == AT_OILRIG;
-			}
 			std::string st_name = GetSafeStationName(st);
 			Owner st_owner = st->owner;
-			StationFacilities st_facilities = st->facilities;
+			StationFacilities tile_fac = GetTileStationFacilities(tile);
 
 			uint32_t prev_handle = (tile.base() < intel.tile_to_station_handle.size()) ? intel.tile_to_station_handle[tile.base()] : 0;
 			StationSnapshot *prev_snap = (prev_handle != 0) ? const_cast<StationSnapshot *>(GetStationSnapshotByHandle(side, prev_handle)) : nullptr;
@@ -625,13 +692,9 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 			/* If previous snapshot matches current live station instance, update it */
 			if (prev_snap != nullptr && prev_snap->exists && prev_snap->instance_id == st->instance_id) {
 				prev_snap->name = st_name;
-				prev_snap->facilities = st_facilities;
 				prev_snap->colour = (st_owner == OWNER_NONE) ? Colours::Grey : _company_colours[st_owner];
-				prev_snap->is_oilrig = is_rig;
 				prev_snap->xy = sign_xy;
-				if (std::find(prev_snap->observed_tiles.begin(), prev_snap->observed_tiles.end(), tile) == prev_snap->observed_tiles.end()) {
-					prev_snap->observed_tiles.push_back(tile);
-				}
+				prev_snap->SetTileContribution(tile, tile_fac);
 				if (tile.base() < intel.tile_to_station_handle.size()) {
 					intel.tile_to_station_handle[tile.base()] = prev_snap->handle;
 				}
@@ -639,13 +702,11 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 			} else {
 				/* Tile changed, is replaced, or is new: detach tile from previous snapshot without mutating remaining hidden tiles */
 				if (prev_snap != nullptr && prev_snap->exists) {
-					auto it = std::find(prev_snap->observed_tiles.begin(), prev_snap->observed_tiles.end(), tile);
-					if (it != prev_snap->observed_tiles.end()) {
-						prev_snap->observed_tiles.erase(it);
-					}
+					prev_snap->RemoveTileContribution(tile);
 					if (prev_snap->observed_tiles.empty()) {
 						prev_snap->exists = false;
 					}
+					prev_snap->UpdateVirtCoord();
 				}
 				prev_snap = nullptr; // Raw pointer must not be accessed across potential vector growth
 
@@ -670,15 +731,10 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 					snap->owner = st_owner;
 				}
 				snap->name = st_name;
-				snap->facilities = st_facilities;
 				snap->colour = (st_owner == OWNER_NONE) ? Colours::Grey : _company_colours[st_owner];
-				snap->is_oilrig = is_rig;
 				snap->xy = sign_xy;
 				snap->exists = true;
-
-				if (std::find(snap->observed_tiles.begin(), snap->observed_tiles.end(), tile) == snap->observed_tiles.end()) {
-					snap->observed_tiles.push_back(tile);
-				}
+				snap->SetTileContribution(tile, tile_fac);
 				if (tile.base() < intel.tile_to_station_handle.size()) {
 					intel.tile_to_station_handle[tile.base()] = snap->handle;
 				}
@@ -692,13 +748,11 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 			intel.tile_to_station_handle[tile.base()] = 0;
 			for (auto &existing : intel.station_snapshots) {
 				if (existing.handle == prev_handle) {
-					auto it = std::find(existing.observed_tiles.begin(), existing.observed_tiles.end(), tile);
-					if (it != existing.observed_tiles.end()) {
-						existing.observed_tiles.erase(it);
-					}
+					existing.RemoveTileContribution(tile);
 					if (existing.observed_tiles.empty()) {
 						existing.exists = false;
 					}
+					existing.UpdateVirtCoord();
 					break;
 				}
 			}
@@ -1413,11 +1467,14 @@ void MilitaryFog::Save()
 				SlWriteByte(GB(num_observed, 16, 8));
 				SlWriteByte(GB(num_observed, 8, 8));
 				SlWriteByte(GB(num_observed, 0, 8));
-				for (TileIndex t : ss.observed_tiles) {
+				for (size_t k = 0; k < ss.observed_tiles.size(); k++) {
+					TileIndex t = ss.observed_tiles[k];
 					SlWriteByte(GB(t.base(), 24, 8));
 					SlWriteByte(GB(t.base(), 16, 8));
 					SlWriteByte(GB(t.base(), 8, 8));
 					SlWriteByte(GB(t.base(), 0, 8));
+					uint8_t fac = (k < ss.tile_facilities.size()) ? ss.tile_facilities[k].base() : 0;
+					SlWriteByte(fac);
 				}
 			}
 		}
@@ -1688,13 +1745,17 @@ void MilitaryFog::Load()
 				num_observed |= (static_cast<uint32_t>(SlReadByte()) << 8);
 				num_observed |= static_cast<uint32_t>(SlReadByte());
 				ss.observed_tiles.resize(num_observed);
+				ss.tile_facilities.resize(num_observed);
 				for (uint32_t ot = 0; ot < num_observed; ot++) {
 					uint32_t t = (static_cast<uint32_t>(SlReadByte()) << 24);
 					t |= (static_cast<uint32_t>(SlReadByte()) << 16);
 					t |= (static_cast<uint32_t>(SlReadByte()) << 8);
 					t |= static_cast<uint32_t>(SlReadByte());
 					ss.observed_tiles[ot] = TileIndex{t};
+					uint8_t fac = SlReadByte();
+					ss.tile_facilities[ot] = static_cast<StationFacilities>(fac);
 				}
+				ss.RecomputeAggregateFacilities();
 				ss.UpdateVirtCoord();
 			} else {
 				ss = StationSnapshot{};
@@ -1763,7 +1824,7 @@ struct MFOGChunkHandler : ChunkHandler {
 				for (const auto &ss : intel.station_snapshots) {
 					len += 1; // exists
 					if (ss.exists) {
-						len += 4 + 4 + 2 + 1 + 1 + 4 + 1 + 1 + 1 + 2 + ss.name.size() + 4 + ss.observed_tiles.size() * 4;
+						len += 4 + 4 + 2 + 1 + 1 + 4 + 1 + 1 + 1 + 2 + ss.name.size() + 4 + ss.observed_tiles.size() * 5;
 					}
 				}
 			}

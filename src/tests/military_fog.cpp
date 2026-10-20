@@ -2678,8 +2678,11 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	MilitaryFog::SetCompanyIntelligenceSide(CompanyID{1}, side1);
 
 	TileIndex tile_A = TileXY(10, 10);
+	TileIndex tile_A_truck = TileXY(11, 10);
+	TileIndex tile_A_bus = TileXY(12, 10);
 	TileIndex tile_B = TileXY(20, 20);
 	TileIndex tile_C = TileXY(30, 30);
+	TileIndex tile_C_dock = TileXY(31, 30);
 	TileIndex tile_dummy = TileXY(40, 40);
 
 	/* Create Station A at tile_A with Train and TruckStop facilities */
@@ -2690,7 +2693,8 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	st_A->owner = CompanyID{0};
 	st_A->facilities = {StationFacility::Train, StationFacility::TruckStop};
 	MakeRailStation(tile_A, CompanyID{0}, st_A->index, Axis::X, 0, RAILTYPE_BEGIN);
-	st_A->spread = TileArea(tile_A, 1, 1);
+	MakeStation(tile_A_truck, CompanyID{0}, st_A->index, StationType::Truck, 0);
+	st_A->spread = TileArea(tile_A, 2, 1);
 	st_A->train_station = TileArea(tile_A, 1, 1);
 	st_A->UpdateVirtCoord();
 
@@ -2845,8 +2849,11 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	/* 1. Side 1 discovers Station A expansion to "Verdun Terminal" with BusStop */
 	st_A->name = "Verdun Terminal";
 	st_A->facilities.Set(StationFacility::BusStop);
+	MakeStation(tile_A_bus, CompanyID{0}, st_A->index, StationType::Bus, 0);
+	st_A->spread = TileArea(tile_A, 3, 1);
 	st_A->UpdateVirtCoord();
 	MilitaryFog::RefreshStationarySnapshot(side1, tile_A);
+	MilitaryFog::RefreshStationarySnapshot(side1, tile_A_bus);
 
 	/* 2. Waypoint B demolished under fog */
 	StationID id_B = wp_B->index;
@@ -2928,8 +2935,9 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	Colours unint_pre_col_B1      = stale_B1->colour;
 	Colours unint_pre_disp_B1     = stale_B1->GetDisplayColour();
 
-	/* Continuation Step 1: Side 0 scouts tile_A -> discovers "Verdun Terminal" with BusStop */
+	/* Continuation Step 1: Side 0 scouts tile_A and tile_A_bus -> discovers "Verdun Terminal" with BusStop */
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_A);
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A_bus);
 	const StationSnapshot *unint_step1_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A);
 	REQUIRE(unint_step1_A0 != nullptr);
 	std::string unint_step1_main_A0 = unint_step1_A0->GetViewportString(false);
@@ -2970,12 +2978,14 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	st_C->owner = CompanyID{1};
 	st_C->facilities = {StationFacility::Train, StationFacility::Dock};
 	MakeRailStation(tile_C, CompanyID{1}, st_C->index, Axis::X, 0, RAILTYPE_BEGIN);
-	st_C->spread = TileArea(tile_C, 1, 1);
+	MakeStation(tile_C_dock, CompanyID{1}, st_C->index, StationType::Dock, 0);
+	st_C->spread = TileArea(tile_C, 2, 1);
 	st_C->train_station = TileArea(tile_C, 1, 1);
 	st_C->UpdateVirtCoord();
 
-	/* Side 0 scouts tile_C -> discovers Station C */
+	/* Side 0 scouts tile_C and tile_C_dock -> discovers Station C */
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_C);
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_C_dock);
 	const StationSnapshot *unint_step3_C0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_C);
 	REQUIRE(unint_step3_C0 != nullptr);
 	std::string unint_step3_main_C0 = unint_step3_C0->GetViewportString(false);
@@ -3015,8 +3025,11 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 
 	/* Clean up live objects */
 	MakeClear(tile_A, ClearGround::Grass, 0);
+	MakeClear(tile_A_truck, ClearGround::Grass, 0);
+	MakeClear(tile_A_bus, ClearGround::Grass, 0);
 	delete st_A;
 	MakeClear(tile_C, ClearGround::Grass, 0);
+	MakeClear(tile_C_dock, ClearGround::Grass, 0);
 	delete st_C;
 
 	/* --- PATH 2: Loaded continuation equivalence --- */
@@ -3097,8 +3110,9 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	CHECK(loaded_B1->sign.width_normal == unint_pre_w_norm_B1);
 	CHECK(loaded_B1->sign.width_small  == unint_pre_w_small_B1);
 
-	/* Loaded continuation Step 1: Side 0 scouts tile_A */
+	/* Loaded continuation Step 1: Side 0 scouts tile_A and tile_A_bus */
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_A);
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A_bus);
 	const StationSnapshot *loaded_step1_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A);
 	REQUIRE(loaded_step1_A0 != nullptr);
 	CHECK(loaded_step1_A0->GetViewportString(false) == unint_step1_main_A0);
@@ -3136,13 +3150,15 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	loaded_st_C->owner = CompanyID{1};
 	loaded_st_C->facilities = {StationFacility::Train, StationFacility::Dock};
 	MakeRailStation(tile_C, CompanyID{1}, loaded_st_C->index, Axis::X, 0, RAILTYPE_BEGIN);
-	loaded_st_C->spread = TileArea(tile_C, 1, 1);
+	MakeStation(tile_C_dock, CompanyID{1}, loaded_st_C->index, StationType::Dock, 0);
+	loaded_st_C->spread = TileArea(tile_C, 2, 1);
 	loaded_st_C->train_station = TileArea(tile_C, 1, 1);
 	loaded_st_C->UpdateVirtCoord();
 
 	CHECK(_next_station_instance_id == 4);
 	CHECK(loaded_st_C->instance_id == 4);
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_C);
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_C_dock);
 	const StationSnapshot *loaded_step3_C0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_C);
 	REQUIRE(loaded_step3_C0 != nullptr);
 	CHECK(loaded_step3_C0->GetViewportString(false) == unint_step3_main_C0);
@@ -3201,10 +3217,13 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 
 	/* Clean up loaded live objects */
 	MakeClear(tile_A, ClearGround::Grass, 0);
+	MakeClear(tile_A_truck, ClearGround::Grass, 0);
+	MakeClear(tile_A_bus, ClearGround::Grass, 0);
 	Station *loaded_st_A = Station::GetIfValid(StationID{0});
 	if (loaded_st_A != nullptr) delete loaded_st_A;
 
 	MakeClear(tile_C, ClearGround::Grass, 0);
+	MakeClear(tile_C_dock, ClearGround::Grass, 0);
 	delete loaded_st_C;
 
 	/* Verify production new-world lifecycle resets station instance allocator independently of test helpers */
@@ -3448,6 +3467,389 @@ TEST_CASE("Military fog - Station instance identity lifecycle and disjoint compo
 	MakeClear(tile_E2, ClearGround::Grass, 0);
 	delete st_E;
 	delete st_F;
+
+	ResetFogTestEnvironment();
+}
+
+TEST_CASE("Military fog - Station per-tile facility accounting, multi-facility tiles, and continuation")
+{
+	ResetFogTestEnvironment();
+	extern void InitializeLanguagePacks();
+	InitializeLanguagePacks();
+	FontCache *fc_norm = FontCache::Get(FontSize::Normal);
+	FontCache *fc_small = FontCache::Get(FontSize::Small);
+	REQUIRE(fc_norm != nullptr);
+	REQUIRE(fc_small != nullptr);
+	LoadStringWidthTable();
+	extern void SetupWidgetDimensions();
+	SetupWidgetDimensions();
+
+	auto HasViewportIcon = [](const std::string &str, StringControlCode scc) {
+		std::string icon;
+		StringBuilder sb(icon);
+		sb.PutUtf8(scc);
+		return str.find(icon) != std::string::npos;
+	};
+
+	/* Setup companies for side affiliation */
+	Company *c1 = Company::CreateAtIndex(CompanyID{0});
+	Company *c2 = Company::CreateAtIndex(CompanyID{1});
+	REQUIRE(c1 != nullptr);
+	REQUIRE(c2 != nullptr);
+	c1->colour = Colours::DarkBlue;
+	_company_colours[CompanyID{0}] = Colours::DarkBlue;
+	c2->colour = Colours::Red;
+	_company_colours[CompanyID{1}] = Colours::Red;
+
+	uint8_t side0 = 0;
+	uint8_t side1 = 1;
+	MilitaryFog::SetCompanyIntelligenceSide(CompanyID{0}, side0);
+	MilitaryFog::SetCompanyIntelligenceSide(CompanyID{1}, side1);
+
+	TileIndex tile_A1 = TileXY(10, 10);
+	TileIndex tile_A2 = TileXY(11, 10);
+	TileIndex tile_A3 = TileXY(12, 10); // Airport added later
+	TileIndex tile_A4 = TileXY(13, 10); // Additional rail platform added later
+
+	TileIndex tile_B = TileXY(20, 20); // Oilrig
+	TileIndex tile_C = TileXY(25, 25); // Road waypoint
+	TileIndex tile_D = TileXY(30, 30); // Rail waypoint
+	TileIndex tile_E = TileXY(35, 35); // Station E created in continuation
+
+	/* 1. Station A with rail (tile_A1) and truck stop (tile_A2) */
+	REQUIRE(Station::CanAllocateItem());
+	Station *st_A = Station::CreateAtIndex(StationID{0}, tile_A1);
+	REQUIRE(st_A != nullptr);
+	st_A->name = "Verdun Complex";
+	st_A->owner = CompanyID{0};
+	st_A->facilities = {StationFacility::Train, StationFacility::TruckStop};
+	MakeRailStation(tile_A1, CompanyID{0}, st_A->index, Axis::X, 0, RAILTYPE_BEGIN);
+	MakeStation(tile_A2, CompanyID{0}, st_A->index, StationType::Truck, 0);
+	st_A->spread = TileArea(tile_A1, 2, 1);
+	st_A->train_station = TileArea(tile_A1, 1, 1);
+	st_A->UpdateVirtCoord();
+
+	/* 2. Station B: Oilrig at tile_B (multi-facility Airport + Dock) */
+	REQUIRE(Station::CanAllocateItem());
+	Station *st_B = Station::CreateAtIndex(StationID{1}, tile_B);
+	REQUIRE(st_B != nullptr);
+	st_B->name = "North Sea Rig";
+	st_B->owner = CompanyID{0};
+	st_B->facilities = {StationFacility::Airport, StationFacility::Dock};
+	st_B->airport.type = AT_OILRIG;
+	MakeStation(tile_B, CompanyID{0}, st_B->index, StationType::Oilrig, 0);
+	st_B->spread = TileArea(tile_B, 1, 1);
+	st_B->airport.tile = tile_B;
+	st_B->UpdateVirtCoord();
+
+	/* 3. Waypoint C: Road waypoint at tile_C (multi-facility BusStop + TruckStop) */
+	REQUIRE(Waypoint::CanAllocateItem());
+	Waypoint *wp_C = Waypoint::CreateAtIndex(StationID{2}, tile_C);
+	REQUIRE(wp_C != nullptr);
+	wp_C->name = "Highway Checkpoint";
+	wp_C->owner = CompanyID{0};
+	wp_C->facilities = {StationFacility::Waypoint, StationFacility::BusStop, StationFacility::TruckStop};
+	MakeStation(tile_C, CompanyID{0}, wp_C->index, StationType::RoadWaypoint, 0);
+	wp_C->spread = TileArea(tile_C, 1, 1);
+	wp_C->UpdateVirtCoord();
+
+	/* 4. Waypoint D: Rail waypoint at tile_D (Waypoint facility) */
+	REQUIRE(Waypoint::CanAllocateItem());
+	Waypoint *wp_D = Waypoint::CreateAtIndex(StationID{3}, tile_D);
+	REQUIRE(wp_D != nullptr);
+	wp_D->name = "Valley Signal";
+	wp_D->owner = CompanyID{0};
+	wp_D->facilities = {StationFacility::Waypoint};
+	MakeStation(tile_D, CompanyID{0}, wp_D->index, StationType::RailWaypoint, 0);
+	wp_D->spread = TileArea(tile_D, 1, 1);
+	wp_D->UpdateVirtCoord();
+
+	/* Initialize military fog */
+	MilitaryFog::Initialize();
+	REQUIRE(MilitaryFog::IsActive());
+
+	/* Verify initial knowledge on Side 0 */
+	const StationSnapshot *init_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A1);
+	const StationSnapshot *init_B0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_B);
+	const StationSnapshot *init_C0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_C);
+	const StationSnapshot *init_D0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_D);
+	REQUIRE(init_A0 != nullptr);
+	REQUIRE(init_B0 != nullptr);
+	REQUIRE(init_C0 != nullptr);
+	REQUIRE(init_D0 != nullptr);
+
+	/* Station A: union of tile_A1 (Train) and tile_A2 (TruckStop) */
+	CHECK(init_A0->facilities.Test(StationFacility::Train));
+	CHECK(init_A0->facilities.Test(StationFacility::TruckStop));
+	CHECK_FALSE(init_A0->facilities.Test(StationFacility::Airport));
+	CHECK_FALSE(init_A0->facilities.Test(StationFacility::Dock));
+	CHECK_FALSE(init_A0->is_oilrig);
+	CHECK(init_A0->observed_tiles.size() == 2);
+	CHECK(init_A0->tile_facilities.size() == 2);
+	CHECK(init_A0->tile_facilities[0] == StationFacility::Train);
+	CHECK(init_A0->tile_facilities[1] == StationFacility::TruckStop);
+	std::string A0_str = init_A0->GetViewportString(false);
+	CHECK(HasViewportIcon(A0_str, SCC_TRAIN));
+	CHECK(HasViewportIcon(A0_str, SCC_LORRY));
+	CHECK_FALSE(HasViewportIcon(A0_str, SCC_PLANE));
+
+	/* Station B: oilrig tile contributes Airport + Dock */
+	CHECK(init_B0->facilities.Test(StationFacility::Airport));
+	CHECK(init_B0->facilities.Test(StationFacility::Dock));
+	CHECK(init_B0->is_oilrig);
+	CHECK(init_B0->observed_tiles.size() == 1);
+	CHECK(init_B0->tile_facilities[0].Test(StationFacility::Airport));
+	CHECK(init_B0->tile_facilities[0].Test(StationFacility::Dock));
+	std::string B0_str = init_B0->GetViewportString(false);
+	CHECK(HasViewportIcon(B0_str, SCC_SHIP));
+	CHECK(HasViewportIcon(B0_str, SCC_PLANE));
+
+	/* Waypoint C: Road waypoint tile contributes BusStop + TruckStop, waypoint kind preserved */
+	CHECK(init_C0->is_waypoint);
+	CHECK(init_C0->facilities.Test(StationFacility::Waypoint));
+	CHECK(init_C0->facilities.Test(StationFacility::BusStop));
+	CHECK(init_C0->facilities.Test(StationFacility::TruckStop));
+	CHECK(init_C0->IsInUse());
+	CHECK(init_C0->GetDisplayColour() == Colours::DarkBlue);
+	CHECK(init_C0->GetViewportString(false) == "Highway Checkpoint");
+
+	/* Waypoint D: Rail waypoint tile (inactive waypoint kind) */
+	CHECK(init_D0->is_waypoint);
+	CHECK(init_D0->facilities.Test(StationFacility::Waypoint));
+	CHECK_FALSE(init_D0->IsInUse());
+	CHECK(init_D0->GetDisplayColour() == Colours::Grey);
+
+	/* --- 2. Hidden airport addition under fog --- */
+	MakeStation(tile_A3, CompanyID{0}, st_A->index, StationType::Airport, 0);
+	st_A->spread = TileArea(tile_A1, 3, 1);
+	st_A->facilities.Set(StationFacility::Airport);
+	st_A->UpdateVirtCoord();
+
+	/* Side 0 scouts rail tile_A1 only */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A1);
+	const StationSnapshot *scout_rail_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A1);
+	REQUIRE(scout_rail_A0 != nullptr);
+	/* Airport MUST NOT be revealed to Side 0 */
+	CHECK_FALSE(scout_rail_A0->facilities.Test(StationFacility::Airport));
+	CHECK(scout_rail_A0->facilities.Test(StationFacility::Train));
+	CHECK(scout_rail_A0->facilities.Test(StationFacility::TruckStop));
+	CHECK_FALSE(HasViewportIcon(scout_rail_A0->GetViewportString(false), SCC_PLANE));
+
+	/* --- 3. First observation of the airport at tile_A3 --- */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A3);
+	const StationSnapshot *scout_air_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A1);
+	REQUIRE(scout_air_A0 != nullptr);
+	CHECK(scout_air_A0->facilities.Test(StationFacility::Airport));
+	CHECK(scout_air_A0->facilities.Test(StationFacility::Train));
+	CHECK(scout_air_A0->facilities.Test(StationFacility::TruckStop));
+	CHECK(scout_air_A0->observed_tiles.size() == 3);
+	CHECK(HasViewportIcon(scout_air_A0->GetViewportString(false), SCC_PLANE));
+
+	/* Side 1 has not scouted tile_A3 -> Side isolation: Side 1 still has NO airport */
+	const StationSnapshot *iso_A1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_A1);
+	REQUIRE(iso_A1 != nullptr);
+	CHECK_FALSE(iso_A1->facilities.Test(StationFacility::Airport));
+	CHECK(iso_A1->observed_tiles.size() == 2);
+
+	/* --- 4. Repeated and same-type contributions --- */
+	/* Add second rail platform at tile_A4 under fog */
+	MakeRailStation(tile_A4, CompanyID{0}, st_A->index, Axis::X, 0, RAILTYPE_BEGIN);
+	st_A->spread = TileArea(tile_A1, 4, 1);
+	st_A->UpdateVirtCoord();
+
+	/* Side 0 scouts tile_A4 */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A4);
+	const StationSnapshot *rep_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A1);
+	REQUIRE(rep_A0 != nullptr);
+	CHECK(rep_A0->observed_tiles.size() == 4);
+	CHECK(rep_A0->tile_facilities.size() == 4);
+
+	/* Repeated observation of tile_A1 does NOT duplicate entry or erase other contributions */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A1);
+	CHECK(rep_A0->observed_tiles.size() == 4);
+	CHECK(rep_A0->facilities.Test(StationFacility::Train));
+	CHECK(rep_A0->facilities.Test(StationFacility::TruckStop));
+	CHECK(rep_A0->facilities.Test(StationFacility::Airport));
+
+	/* --- 5. Partial demolition with hidden contributions retained --- */
+	/* Demolish second rail platform tile_A4 under fog */
+	MakeClear(tile_A4, ClearGround::Grass, 0);
+
+	/* Side 0 scouts demolished tile_A4 */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A4);
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side0, tile_A4) == nullptr);
+
+	/* But Station A's snapshot still exists at tile_A1 and retains Train from tile_A1, Truck from tile_A2, Airport from tile_A3! */
+	const StationSnapshot *part_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A1);
+	REQUIRE(part_A0 != nullptr);
+	CHECK(part_A0->exists);
+	CHECK(part_A0->observed_tiles.size() == 3);
+	CHECK(part_A0->facilities.Test(StationFacility::Train));
+	CHECK(part_A0->facilities.Test(StationFacility::TruckStop));
+	CHECK(part_A0->facilities.Test(StationFacility::Airport));
+
+	/* Now demolish airport tile_A3 under fog */
+	MakeClear(tile_A3, ClearGround::Grass, 0);
+
+	/* Side 0 scouts demolished tile_A3 */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A3);
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side0, tile_A3) == nullptr);
+
+	/* Station A no longer has airport, but still has Train (from A1) and TruckStop (from A2)! */
+	const StationSnapshot *no_air_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A1);
+	REQUIRE(no_air_A0 != nullptr);
+	CHECK_FALSE(no_air_A0->facilities.Test(StationFacility::Airport));
+	CHECK(no_air_A0->facilities.Test(StationFacility::Train));
+	CHECK(no_air_A0->facilities.Test(StationFacility::TruckStop));
+	CHECK_FALSE(HasViewportIcon(no_air_A0->GetViewportString(false), SCC_PLANE));
+	CHECK(HasViewportIcon(no_air_A0->GetViewportString(false), SCC_TRAIN));
+	CHECK(HasViewportIcon(no_air_A0->GetViewportString(false), SCC_LORRY));
+
+	/* --- 6. Demolition of multi-facility tiles --- */
+	/* Demolish oilrig tile_B under fog */
+	MakeClear(tile_B, ClearGround::Grass, 0);
+	delete st_B;
+	st_B = nullptr;
+
+	/* Side 0 scouts tile_B */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_B);
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side0, tile_B) == nullptr);
+	const StationSnapshot *old_B0 = MilitaryFog::GetStationSnapshotByHandle(side0, init_B0->handle);
+	REQUIRE(old_B0 != nullptr);
+	CHECK_FALSE(old_B0->exists);
+	CHECK(old_B0->observed_tiles.empty());
+	CHECK_FALSE(old_B0->is_oilrig);
+	CHECK(old_B0->facilities.None());
+
+	/* Demolish road waypoint tile_C under fog */
+	MakeClear(tile_C, ClearGround::Grass, 0);
+	delete wp_C;
+	wp_C = nullptr;
+
+	/* Side 0 scouts tile_C */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_C);
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side0, tile_C) == nullptr);
+	const StationSnapshot *old_C0 = MilitaryFog::GetStationSnapshotByHandle(side0, init_C0->handle);
+	REQUIRE(old_C0 != nullptr);
+	CHECK_FALSE(old_C0->exists);
+	CHECK(old_C0->observed_tiles.empty());
+	CHECK(old_C0->facilities.Test(StationFacility::Waypoint));
+	CHECK_FALSE(old_C0->IsInUse());
+	CHECK(old_C0->GetDisplayColour() == Colours::Grey);
+
+	/* --- 7. Save and Load continuation --- */
+	SaveLoadResult save_res = SaveOrLoad("test_station_facility_accounting.sav", SaveLoadOperation::Save, DetailedFileType::GameFile, Subdirectory::None, false);
+	REQUIRE(save_res == SaveLoadResult::Ok);
+
+	/* PATH 1: Uninterrupted continuation */
+	/* Create new Station E at tile_E with Dock */
+	REQUIRE(Station::CanAllocateItem());
+	Station *st_E = Station::CreateAtIndex(StationID{1}, tile_E);
+	REQUIRE(st_E != nullptr);
+	st_E->name = "Harbor Base";
+	st_E->owner = CompanyID{1};
+	st_E->facilities = {StationFacility::Dock};
+	MakeStation(tile_E, CompanyID{1}, st_E->index, StationType::Dock, 0);
+	st_E->spread = TileArea(tile_E, 1, 1);
+	st_E->UpdateVirtCoord();
+
+	/* Side 0 scouts tile_E */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_E);
+	const StationSnapshot *unint_E0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_E);
+	REQUIRE(unint_E0 != nullptr);
+	uint32_t unint_h_E = unint_E0->handle;
+	uint32_t unint_inst_E = unint_E0->instance_id;
+	StationFacilities unint_fac_E = unint_E0->facilities;
+	std::string unint_str_E = unint_E0->GetViewportString(false);
+	uint16_t unint_w_norm_E = unint_E0->sign.width_normal;
+	uint16_t unint_w_small_E = unint_E0->sign.width_small;
+	Colours unint_col_E = unint_E0->colour;
+	Colours unint_disp_E = unint_E0->GetDisplayColour();
+
+	CHECK(unint_fac_E.Test(StationFacility::Dock));
+	CHECK_FALSE(unint_fac_E.Test(StationFacility::Train));
+	CHECK(HasViewportIcon(unint_str_E, SCC_SHIP));
+
+	/* Clean up live objects from uninterrupted path */
+	MakeClear(tile_A1, ClearGround::Grass, 0);
+	MakeClear(tile_A2, ClearGround::Grass, 0);
+	delete st_A;
+	MakeClear(tile_D, ClearGround::Grass, 0);
+	delete wp_D;
+	MakeClear(tile_E, ClearGround::Grass, 0);
+	delete st_E;
+
+	/* PATH 2: Loaded continuation */
+	MilitaryFog::Reset();
+	REQUIRE_FALSE(MilitaryFog::IsActive());
+
+	SaveLoadResult load_res = SaveOrLoad("test_station_facility_accounting.sav", SaveLoadOperation::Load, DetailedFileType::GameFile, Subdirectory::None, false);
+	REQUIRE(load_res == SaveLoadResult::Ok);
+	std::remove("test_station_facility_accounting.sav");
+	REQUIRE(MilitaryFog::IsActive());
+
+	/* Verify loaded state on Side 0 immediately post-load */
+	const StationSnapshot *loaded_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A1);
+	REQUIRE(loaded_A0 != nullptr);
+	CHECK(loaded_A0->exists);
+	CHECK(loaded_A0->observed_tiles.size() == 2);
+	CHECK(loaded_A0->tile_facilities.size() == 2);
+	CHECK(loaded_A0->facilities.Test(StationFacility::Train));
+	CHECK(loaded_A0->facilities.Test(StationFacility::TruckStop));
+	CHECK_FALSE(loaded_A0->facilities.Test(StationFacility::Airport));
+	CHECK(HasViewportIcon(loaded_A0->GetViewportString(false), SCC_TRAIN));
+	CHECK(HasViewportIcon(loaded_A0->GetViewportString(false), SCC_LORRY));
+	CHECK_FALSE(HasViewportIcon(loaded_A0->GetViewportString(false), SCC_PLANE));
+
+	/* Verify loaded state on Side 1: Side isolation preserved */
+	const StationSnapshot *loaded_A1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_A1);
+	REQUIRE(loaded_A1 != nullptr);
+	CHECK(loaded_A1->observed_tiles.size() == 2);
+	CHECK_FALSE(loaded_A1->facilities.Test(StationFacility::Airport));
+
+	/* Verify loaded Waypoint D: Inactive rail waypoint */
+	const StationSnapshot *loaded_D0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_D);
+	REQUIRE(loaded_D0 != nullptr);
+	CHECK(loaded_D0->is_waypoint);
+	CHECK(loaded_D0->facilities.Test(StationFacility::Waypoint));
+	CHECK_FALSE(loaded_D0->IsInUse());
+	CHECK(loaded_D0->GetDisplayColour() == Colours::Grey);
+
+	/* Recreate Station E in loaded continuation and scout */
+	REQUIRE(Station::CanAllocateItem());
+	Station *loaded_st_E = Station::CreateAtIndex(StationID{1}, tile_E);
+	REQUIRE(loaded_st_E != nullptr);
+	loaded_st_E->name = "Harbor Base";
+	loaded_st_E->owner = CompanyID{1};
+	loaded_st_E->facilities = {StationFacility::Dock};
+	MakeStation(tile_E, CompanyID{1}, loaded_st_E->index, StationType::Dock, 0);
+	loaded_st_E->spread = TileArea(tile_E, 1, 1);
+	loaded_st_E->UpdateVirtCoord();
+
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_E);
+	const StationSnapshot *loaded_E0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_E);
+	REQUIRE(loaded_E0 != nullptr);
+
+	/* Check loaded continuation equivalence to uninterrupted continuation */
+	CHECK(loaded_E0->handle == unint_h_E);
+	CHECK(loaded_E0->instance_id == unint_inst_E);
+	CHECK(loaded_E0->facilities == unint_fac_E);
+	CHECK(loaded_E0->GetViewportString(false) == unint_str_E);
+	CHECK(loaded_E0->sign.width_normal == unint_w_norm_E);
+	CHECK(loaded_E0->sign.width_small == unint_w_small_E);
+	CHECK(loaded_E0->colour == unint_col_E);
+	CHECK(loaded_E0->GetDisplayColour() == unint_disp_E);
+
+	/* Clean up loaded live objects */
+	MakeClear(tile_A1, ClearGround::Grass, 0);
+	MakeClear(tile_A2, ClearGround::Grass, 0);
+	Station *loaded_st_A = Station::GetIfValid(StationID{0});
+	if (loaded_st_A != nullptr) delete loaded_st_A;
+	MakeClear(tile_D, ClearGround::Grass, 0);
+	Waypoint *loaded_wp_D = Waypoint::GetIfValid(StationID{3});
+	if (loaded_wp_D != nullptr) delete loaded_wp_D;
+	MakeClear(tile_E, ClearGround::Grass, 0);
+	delete loaded_st_E;
 
 	ResetFogTestEnvironment();
 }

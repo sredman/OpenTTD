@@ -73,6 +73,25 @@ struct StationSnapshot {
 	bool exists = false;                          ///< Whether the station existed when last observed.
 	ViewportSign sign{};                          ///< Viewport sign coordinates and dimensions.
 	std::vector<TileIndex> observed_tiles{};      ///< Observed footprint tiles belonging to this snapshot.
+	std::vector<StationFacilities> tile_facilities{}; ///< Remembered facility contributions per observed footprint tile.
+
+	/**
+	 * Record or update the facility contribution of an observed tile.
+	 * @param tile Tile to set contribution for.
+	 * @param fac Facilities contributed by this tile.
+	 */
+	void SetTileContribution(TileIndex tile, StationFacilities fac);
+
+	/**
+	 * Remove the facility contribution of an observed tile.
+	 * @param tile Tile to remove contribution for.
+	 */
+	void RemoveTileContribution(TileIndex tile);
+
+	/**
+	 * Recompute aggregate snapshot facilities and oilrig status from remembered tile contributions.
+	 */
+	void RecomputeAggregateFacilities();
 
 	/**
 	 * Check whether this snapshot represents an active station or waypoint with transport facilities.

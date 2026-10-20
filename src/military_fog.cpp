@@ -291,6 +291,7 @@ void MilitaryFog::Initialize()
 			uint32_t handle = station_h++;
 			StationSnapshot ss;
 			ss.handle = handle;
+			ss.instance_id = st->instance_id;
 			ss.original_id = st->index;
 			ss.is_waypoint = !Station::IsExpected(st);
 			if (Station::IsExpected(st)) {
@@ -333,6 +334,11 @@ void MilitaryFog::Reset()
 	for (uint8_t s = 0; s < MAX_MILITARY_SIDES; s++) {
 		_side_intelligence[s].Reset();
 	}
+}
+
+void MilitaryFog::ResetStationInstanceCounter()
+{
+	_next_station_instance_id = 0;
 }
 
 uint8_t MilitaryFog::GetCompanyIntelligenceSide(CompanyID company)
@@ -616,13 +622,13 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 			uint32_t prev_handle = (tile.base() < intel.tile_to_station_handle.size()) ? intel.tile_to_station_handle[tile.base()] : 0;
 			StationSnapshot *prev_snap = (prev_handle != 0) ? const_cast<StationSnapshot *>(GetStationSnapshotByHandle(side, prev_handle)) : nullptr;
 
-			/* If previous snapshot matches current live station at sign_xy, update it */
-			if (prev_snap != nullptr && prev_snap->xy == sign_xy && prev_snap->is_waypoint == is_wp &&
-					prev_snap->owner == st_owner) {
+			/* If previous snapshot matches current live station instance, update it */
+			if (prev_snap != nullptr && prev_snap->exists && prev_snap->instance_id == st->instance_id) {
 				prev_snap->name = st_name;
 				prev_snap->facilities = st_facilities;
 				prev_snap->colour = (st_owner == OWNER_NONE) ? Colours::Grey : _company_colours[st_owner];
 				prev_snap->is_oilrig = is_rig;
+				prev_snap->xy = sign_xy;
 				if (std::find(prev_snap->observed_tiles.begin(), prev_snap->observed_tiles.end(), tile) == prev_snap->observed_tiles.end()) {
 					prev_snap->observed_tiles.push_back(tile);
 				}
@@ -631,8 +637,8 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 				}
 				prev_snap->UpdateVirtCoord();
 			} else {
-				/* Tile changed or is new: detach tile from previous snapshot without mutating remaining hidden tiles */
-				if (prev_snap != nullptr) {
+				/* Tile changed, is replaced, or is new: detach tile from previous snapshot without mutating remaining hidden tiles */
+				if (prev_snap != nullptr && prev_snap->exists) {
 					auto it = std::find(prev_snap->observed_tiles.begin(), prev_snap->observed_tiles.end(), tile);
 					if (it != prev_snap->observed_tiles.end()) {
 						prev_snap->observed_tiles.erase(it);
@@ -643,11 +649,10 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 				}
 				prev_snap = nullptr; // Raw pointer must not be accessed across potential vector growth
 
-				/* Find if an existing active snapshot already represents this live station at sign_xy */
+				/* Find if an existing active snapshot already represents this live station instance (e.g. disjoint components) */
 				StationSnapshot *snap = nullptr;
 				for (auto &existing : intel.station_snapshots) {
-					if (existing.exists && existing.xy == sign_xy && existing.is_waypoint == is_wp &&
-							existing.owner == st_owner) {
+					if (existing.exists && existing.instance_id == st->instance_id) {
 						snap = &existing;
 						break;
 					}
@@ -657,6 +662,7 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 					intel.station_snapshots.emplace_back();
 					snap = &intel.station_snapshots.back();
 					snap->handle = handle;
+					snap->instance_id = st->instance_id;
 					snap->original_id = sid;
 					snap->is_waypoint = is_wp;
 					snap->xy = sign_xy;
@@ -667,6 +673,7 @@ void MilitaryFog::RefreshStationarySnapshot(uint8_t side, TileIndex tile)
 				snap->facilities = st_facilities;
 				snap->colour = (st_owner == OWNER_NONE) ? Colours::Grey : _company_colours[st_owner];
 				snap->is_oilrig = is_rig;
+				snap->xy = sign_xy;
 				snap->exists = true;
 
 				if (std::find(snap->observed_tiles.begin(), snap->observed_tiles.end(), tile) == snap->observed_tiles.end()) {
@@ -1027,7 +1034,7 @@ const StationSnapshot *MilitaryFog::GetStationSnapshotByHandle(uint8_t side, uin
 	if (!_military_fog_active || side >= MAX_MILITARY_SIDES || handle == 0) return nullptr;
 	const auto &snaps = _side_intelligence[side].station_snapshots;
 	for (const auto &ss : snaps) {
-		if (ss.exists && ss.handle == handle) return &ss;
+		if (ss.handle == handle) return &ss;
 	}
 	return nullptr;
 }
@@ -1038,7 +1045,10 @@ const StationSnapshot *MilitaryFog::GetStationSnapshotAtTile(uint8_t side, TileI
 	const auto &intel = _side_intelligence[side];
 	if (tile.base() < intel.tile_to_station_handle.size()) {
 		uint32_t handle = intel.tile_to_station_handle[tile.base()];
-		if (handle != 0) return GetStationSnapshotByHandle(side, handle);
+		if (handle != 0) {
+			const StationSnapshot *ss = GetStationSnapshotByHandle(side, handle);
+			if (ss != nullptr && ss->exists) return ss;
+		}
 	}
 	for (const auto &ss : intel.station_snapshots) {
 		if (ss.exists && ss.xy == tile) return &ss;
@@ -1051,6 +1061,15 @@ const StationSnapshot *MilitaryFog::GetStationSnapshot(uint8_t side, StationID s
 	if (!_military_fog_active || side >= MAX_MILITARY_SIDES) return nullptr;
 	for (const auto &ss : _side_intelligence[side].station_snapshots) {
 		if (ss.exists && ss.original_id == station) return &ss;
+	}
+	return nullptr;
+}
+
+const StationSnapshot *MilitaryFog::GetStationSnapshotByInstance(uint8_t side, uint32_t instance_id)
+{
+	if (!_military_fog_active || side >= MAX_MILITARY_SIDES || instance_id == 0) return nullptr;
+	for (const auto &ss : _side_intelligence[side].station_snapshots) {
+		if (ss.exists && ss.instance_id == instance_id) return &ss;
 	}
 	return nullptr;
 }
@@ -1361,6 +1380,11 @@ void MilitaryFog::Save()
 				SlWriteByte(GB(ss.handle, 8, 8));
 				SlWriteByte(GB(ss.handle, 0, 8));
 
+				SlWriteByte(GB(ss.instance_id, 24, 8));
+				SlWriteByte(GB(ss.instance_id, 16, 8));
+				SlWriteByte(GB(ss.instance_id, 8, 8));
+				SlWriteByte(GB(ss.instance_id, 0, 8));
+
 				uint16_t orig_id = ss.original_id.base();
 				SlWriteByte(GB(orig_id, 8, 8));
 				SlWriteByte(GB(orig_id, 0, 8));
@@ -1629,6 +1653,12 @@ void MilitaryFog::Load()
 				h |= static_cast<uint32_t>(SlReadByte());
 				ss.handle = h;
 
+				uint32_t inst_id = (static_cast<uint32_t>(SlReadByte()) << 24);
+				inst_id |= (static_cast<uint32_t>(SlReadByte()) << 16);
+				inst_id |= (static_cast<uint32_t>(SlReadByte()) << 8);
+				inst_id |= static_cast<uint32_t>(SlReadByte());
+				ss.instance_id = inst_id;
+
 				uint16_t orig_id = (static_cast<uint16_t>(SlReadByte()) << 8);
 				orig_id |= static_cast<uint16_t>(SlReadByte());
 				ss.original_id = StationID{orig_id};
@@ -1675,6 +1705,7 @@ void MilitaryFog::Load()
 		intel.tile_to_station_handle.assign(map_size, 0);
 		for (const auto &ss : intel.station_snapshots) {
 			if (ss.exists) {
+				_next_station_instance_id = std::max(_next_station_instance_id, ss.instance_id);
 				for (TileIndex t : ss.observed_tiles) {
 					if (t.base() < map_size) {
 						intel.tile_to_station_handle[t.base()] = ss.handle;
@@ -1682,6 +1713,10 @@ void MilitaryFog::Load()
 				}
 			}
 		}
+	}
+
+	for (const BaseStation *st : BaseStation::Iterate()) {
+		_next_station_instance_id = std::max(_next_station_instance_id, st->instance_id);
 	}
 
 	ReconstructVisibility(false);
@@ -1728,7 +1763,7 @@ struct MFOGChunkHandler : ChunkHandler {
 				for (const auto &ss : intel.station_snapshots) {
 					len += 1; // exists
 					if (ss.exists) {
-						len += 4 + 2 + 1 + 1 + 4 + 1 + 1 + 1 + 2 + ss.name.size() + 4 + ss.observed_tiles.size() * 4;
+						len += 4 + 4 + 2 + 1 + 1 + 4 + 1 + 1 + 1 + 2 + ss.name.size() + 4 + ss.observed_tiles.size() * 4;
 					}
 				}
 			}

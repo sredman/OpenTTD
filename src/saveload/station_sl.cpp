@@ -112,6 +112,14 @@ void MoveBuoysToWaypoints()
 
 void AfterLoadStations()
 {
+	for (BaseStation *st : BaseStation::Iterate()) {
+		if (st->instance_id == 0) {
+			st->instance_id = ++_next_station_instance_id;
+		} else {
+			_next_station_instance_id = std::max(_next_station_instance_id, st->instance_id);
+		}
+	}
+
 	/* Update the speclists of all stations to point to the currently loaded custom stations. */
 	for (BaseStation *st : BaseStation::Iterate()) {
 		for (auto &sm : GetStationSpecList<StationSpec>(st)) {
@@ -592,6 +600,7 @@ public:
 		SaveLoad::Variable<VarFileType::U8>("owner", SLE_OBJECT_ADDRESS(BaseStation, owner)),
 		SaveLoad::Variable<VarFileType::U8>("facilities", SLE_OBJECT_ADDRESS(BaseStation, facilities)),
 		SaveLoad::Variable<VarFileType::I32>("build_date", SLE_OBJECT_ADDRESS(BaseStation, build_date)),
+		SaveLoad::Variable<VarFileType::U32>("instance_id", SLE_OBJECT_ADDRESS(BaseStation, instance_id)),
 
 		/* Used by newstations for graphic variations */
 		SaveLoad::Variable<VarFileType::U16>("random_bits", SLE_OBJECT_ADDRESS(BaseStation, random_bits)),
@@ -740,6 +749,7 @@ struct STNNChunkHandler : ChunkHandler {
 
 	void Load() const override
 	{
+		_next_station_instance_id = 0;
 		const std::vector<SaveLoad> slt = SlCompatTableHeader(_station_desc, _station_sl_compat);
 
 		_old_num_flows = 0;

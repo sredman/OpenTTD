@@ -61,6 +61,7 @@ struct TownSnapshot {
 /** Stored stationary snapshot of a station or waypoint. */
 struct StationSnapshot {
 	uint32_t handle = 0;                          ///< Unique side-local stationary snapshot handle.
+	uint32_t instance_id = 0;                     ///< Observed station instance lifetime identifier.
 	StationID original_id = StationID::Invalid();  ///< Station ID when observed.
 	bool is_waypoint = false;                     ///< True if waypoint, false if station.
 	bool is_oilrig = false;                       ///< True if oil rig station (offset sign).
@@ -356,6 +357,19 @@ public:
 	 * @return Pointer to snapshot, or nullptr if not available.
 	 */
 	static const StationSnapshot *GetStationSnapshot(uint8_t side, StationID station);
+
+	/**
+	 * Get stored snapshot of a station or waypoint for a specific side by instance ID.
+	 * @param side Side index.
+	 * @param instance_id Station instance ID.
+	 * @return Pointer to snapshot, or nullptr if not available.
+	 */
+	static const StationSnapshot *GetStationSnapshotByInstance(uint8_t side, uint32_t instance_id);
+
+	/**
+	 * Reset the station instance counter (for tests).
+	 */
+	static void ResetStationInstanceCounter();
 
 	/**
 	 * Get stored snapshot of an industry for a specific side by tile location.

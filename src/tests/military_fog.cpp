@@ -72,6 +72,7 @@ static void ResetFogTestEnvironment()
 	_company_pool.CleanPool();
 	_town_pool.CleanPool();
 	_station_pool.CleanPool();
+	MilitaryFog::ResetStationInstanceCounter();
 	_industry_pool.CleanPool();
 	_object_pool.CleanPool();
 	ResetIndustries();
@@ -2734,7 +2735,10 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	REQUIRE(init_B1 != nullptr);
 
 	/* Station A attributes */
+	CHECK(st_A->instance_id == 1);
+	CHECK(wp_B->instance_id == 2);
 	CHECK(init_A0->handle == 1);
+	CHECK(init_A0->instance_id == 1);
 	CHECK(init_A0->original_id == StationID{0});
 	CHECK_FALSE(init_A0->is_waypoint);
 	CHECK(init_A0->name == "Verdun Rail Depot");
@@ -2744,9 +2748,13 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 
 	/* Waypoint B attributes */
 	CHECK(init_B0->handle == 2);
+	CHECK(init_B0->instance_id == 2);
 	CHECK(init_B0->original_id == StationID{1});
 	CHECK(init_B0->is_waypoint);
 	CHECK(init_B0->name == "Meuse Waypoint");
+
+	CHECK(init_A1->instance_id == 1);
+	CHECK(init_B1->instance_id == 2);
 
 	/* Station A colour and activity checks */
 	CHECK(init_A0->colour == Colours::DarkBlue);
@@ -2922,6 +2930,7 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	Colours unint_step1_disp_A0     = unint_step1_A0->GetDisplayColour();
 
 	CHECK(unint_step1_h_A0 == 1);
+	CHECK(unint_step1_A0->instance_id == 1);
 	CHECK(unint_step1_mini_A0 == "Verdun Terminal");
 	CHECK(unint_step1_A0->facilities.Test(StationFacility::BusStop));
 	CHECK(unint_step1_A0->colour == Colours::Yellow);
@@ -2966,7 +2975,9 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	Colours unint_step3_col_C0      = unint_step3_C0->colour;
 	Colours unint_step3_disp_C0     = unint_step3_C0->GetDisplayColour();
 
+	CHECK(st_C->instance_id == 3);
 	CHECK(unint_step3_h_C0 == 3);
+	CHECK(unint_step3_C0->instance_id == 3);
 	CHECK(unint_step3_C0->original_id == id_B);
 	CHECK(unint_step3_mini_C0 == "Sedan Junction");
 	CHECK(unint_step3_C0->facilities.Test(StationFacility::Dock));
@@ -2981,6 +2992,7 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	Colours unint_step3_col_B1      = unint_step3_B1->colour;
 	Colours unint_step3_disp_B1     = unint_step3_B1->GetDisplayColour();
 	CHECK(unint_step3_B1->handle == 2);
+	CHECK(unint_step3_B1->instance_id == 2);
 	CHECK(unint_step3_B1->name == "Meuse Waypoint");
 	CHECK(unint_step3_B1->colour == Colours::DarkBlue);
 	CHECK(unint_step3_B1->GetDisplayColour() == Colours::Grey);
@@ -3034,6 +3046,7 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 
 	/* Side 0 retained stale Station A */
 	CHECK(loaded_A0->handle == 1);
+	CHECK(loaded_A0->instance_id == 1);
 	CHECK(loaded_A0->original_id == StationID{0});
 	CHECK(loaded_A0->name == "Verdun Rail Depot");
 	CHECK(loaded_A0->GetViewportString(false) == unint_pre_main_A0);
@@ -3043,6 +3056,7 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 
 	/* Side 1 retained refreshed Station A */
 	CHECK(loaded_A1->handle == 1);
+	CHECK(loaded_A1->instance_id == 1);
 	CHECK(loaded_A1->original_id == StationID{0});
 	CHECK(loaded_A1->name == "Verdun Terminal");
 	CHECK(loaded_A1->GetViewportString(false) == unint_pre_main_A1);
@@ -3052,6 +3066,7 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 
 	/* Stale Waypoint B retained by Side 0 */
 	CHECK(loaded_B0->handle == 2);
+	CHECK(loaded_B0->instance_id == 2);
 	CHECK(loaded_B0->original_id == id_B);
 	CHECK(loaded_B0->name == "Meuse Waypoint");
 	CHECK(loaded_B0->GetViewportString(false) == unint_pre_main_B0);
@@ -3061,6 +3076,7 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 
 	/* Stale Waypoint B retained by Side 1 */
 	CHECK(loaded_B1->handle == 2);
+	CHECK(loaded_B1->instance_id == 2);
 	CHECK(loaded_B1->original_id == id_B);
 	CHECK(loaded_B1->name == "Meuse Waypoint");
 	CHECK(loaded_B1->GetViewportString(false) == unint_pre_main_B1);
@@ -3078,6 +3094,7 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	CHECK(loaded_step1_A0->sign.width_small  == unint_step1_w_small_A0);
 	CHECK(loaded_step1_A0->handle == unint_step1_h_A0);
 	CHECK(loaded_step1_A0->handle == 1);
+	CHECK(loaded_step1_A0->instance_id == 1);
 	CHECK(loaded_step1_A0->colour == unint_step1_col_A0);
 	CHECK(loaded_step1_A0->GetDisplayColour() == unint_step1_disp_A0);
 
@@ -3110,6 +3127,7 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	loaded_st_C->train_station = TileArea(tile_C, 1, 1);
 	loaded_st_C->UpdateVirtCoord();
 
+	CHECK(loaded_st_C->instance_id == 3);
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_C);
 	const StationSnapshot *loaded_step3_C0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_C);
 	REQUIRE(loaded_step3_C0 != nullptr);
@@ -3119,6 +3137,7 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	CHECK(loaded_step3_C0->sign.width_small  == unint_step3_w_small_C0);
 	CHECK(loaded_step3_C0->handle == unint_step3_h_C0);
 	CHECK(loaded_step3_C0->handle == 3);
+	CHECK(loaded_step3_C0->instance_id == 3);
 	CHECK(loaded_step3_C0->original_id == id_B);
 	CHECK(loaded_step3_C0->colour == unint_step3_col_C0);
 	CHECK(loaded_step3_C0->GetDisplayColour() == unint_step3_disp_C0);
@@ -3140,6 +3159,7 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	const StationSnapshot *loaded_step3_B1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
 	REQUIRE(loaded_step3_B1 != nullptr);
 	CHECK(loaded_step3_B1->handle == 2);
+	CHECK(loaded_step3_B1->instance_id == 2);
 	CHECK(loaded_step3_B1->original_id == id_B);
 	CHECK(loaded_step3_B1->name == "Meuse Waypoint");
 	CHECK(loaded_step3_B1->GetViewportString(false) == unint_pre_main_B1);
@@ -3172,6 +3192,223 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 
 	MakeClear(tile_C, ClearGround::Grass, 0);
 	delete loaded_st_C;
+
+	ResetFogTestEnvironment();
+}
+
+TEST_CASE("Military fog - Station instance identity lifecycle and disjoint components")
+{
+	ResetFogTestEnvironment();
+	extern void InitializeLanguagePacks();
+	InitializeLanguagePacks();
+	FontCache *fc_norm = FontCache::Get(FontSize::Normal);
+	FontCache *fc_small = FontCache::Get(FontSize::Small);
+	REQUIRE(fc_norm != nullptr);
+	REQUIRE(fc_small != nullptr);
+	LoadStringWidthTable();
+	extern void SetupWidgetDimensions();
+	SetupWidgetDimensions();
+
+	Company *c1 = Company::CreateAtIndex(CompanyID{0});
+	REQUIRE(c1 != nullptr);
+	Company *c2 = Company::CreateAtIndex(CompanyID{1});
+	REQUIRE(c2 != nullptr);
+	_local_company = CompanyID{0};
+
+	uint8_t side0 = 0;
+	uint8_t side1 = 1;
+	MilitaryFog::SetCompanyIntelligenceSide(CompanyID{0}, side0);
+	MilitaryFog::SetCompanyIntelligenceSide(CompanyID{1}, side1);
+
+	/* --- PART A: Disjoint component discovery joins existing record --- */
+	TileIndex tile_A1 = TileXY(10, 10);
+	TileIndex tile_A2 = TileXY(14, 10); // Disjoint component of Station A
+
+	REQUIRE(Station::CanAllocateItem());
+	Station *st_A = Station::CreateAtIndex(StationID{0}, tile_A1);
+	REQUIRE(st_A != nullptr);
+	st_A->name = "Verdun Central";
+	st_A->owner = CompanyID{0};
+	st_A->facilities = {StationFacility::Train, StationFacility::Dock};
+	MakeRailStation(tile_A1, CompanyID{0}, st_A->index, Axis::X, 0, RAILTYPE_BEGIN);
+	MakeRailStation(tile_A2, CompanyID{0}, st_A->index, Axis::X, 0, RAILTYPE_BEGIN);
+	st_A->spread = TileArea(tile_A1, 5, 1);
+	st_A->train_station = TileArea(tile_A1, 5, 1);
+	st_A->UpdateVirtCoord();
+
+	/* Assign instance ID */
+	uint32_t inst_A = st_A->instance_id;
+	CHECK(inst_A > 0);
+
+	/* Initialize fog: creates initial snapshots */
+	MilitaryFog::Initialize();
+	REQUIRE(MilitaryFog::IsActive());
+
+	/* Side 0 scouts first component tile_A1 */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A1);
+	const StationSnapshot *snap_A0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A1);
+	REQUIRE(snap_A0 != nullptr);
+	uint32_t handle_A = snap_A0->handle;
+	CHECK(handle_A == 1);
+	CHECK(snap_A0->instance_id == inst_A);
+	CHECK(MilitaryFog::GetSideIntelligence(side0).next_station_handle == 2);
+
+	/* Side 0 scouts disjoint component tile_A2 of the same living station */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_A2);
+	const StationSnapshot *snap_A2_0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A2);
+	REQUIRE(snap_A2_0 != nullptr);
+	/* Must reuse existing handle and join the existing snapshot */
+	CHECK(snap_A2_0->handle == handle_A);
+	CHECK(snap_A2_0->instance_id == inst_A);
+	CHECK(MilitaryFog::GetSideIntelligence(side0).next_station_handle == 2);
+	CHECK(std::find(snap_A2_0->observed_tiles.begin(), snap_A2_0->observed_tiles.end(), tile_A1) != snap_A2_0->observed_tiles.end());
+	CHECK(std::find(snap_A2_0->observed_tiles.begin(), snap_A2_0->observed_tiles.end(), tile_A2) != snap_A2_0->observed_tiles.end());
+
+	/* Lookup helper by instance ID */
+	CHECK(MilitaryFog::GetStationSnapshotByInstance(side0, inst_A) == snap_A2_0);
+
+	/* --- PART B: Same-location replacement with reused ID, identical owner and kind --- */
+	TileIndex tile_B = TileXY(20, 20);
+	REQUIRE(Waypoint::CanAllocateItem());
+	Waypoint *wp_B = Waypoint::CreateAtIndex(StationID{1}, tile_B);
+	REQUIRE(wp_B != nullptr);
+	wp_B->name = "Meuse Post";
+	wp_B->owner = CompanyID{0};
+	wp_B->facilities = {StationFacility::Waypoint};
+	MakeStation(tile_B, CompanyID{0}, wp_B->index, StationType::RailWaypoint, 0);
+	wp_B->spread = TileArea(tile_B, 1, 1);
+	wp_B->UpdateVirtCoord();
+
+	uint32_t inst_B = wp_B->instance_id;
+	CHECK(inst_B > inst_A);
+
+	/* Side 1 scouts tile_B -> discovers Waypoint B */
+	MilitaryFog::RefreshStationarySnapshot(side1, tile_B);
+	const StationSnapshot *snap_B1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
+	REQUIRE(snap_B1 != nullptr);
+	uint32_t handle_B = snap_B1->handle;
+	CHECK(snap_B1->instance_id == inst_B);
+	CHECK(snap_B1->name == "Meuse Post");
+
+	/* Waypoint B is demolished under fog */
+	StationID id_B = wp_B->index;
+	MakeClear(tile_B, ClearGround::Grass, 0);
+	delete wp_B;
+	wp_B = nullptr;
+
+	/* Under fog, Side 1 STILL retains stale Waypoint B with its instance ID and handle */
+	const StationSnapshot *stale_B1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
+	REQUIRE(stale_B1 != nullptr);
+	CHECK(stale_B1->handle == handle_B);
+	CHECK(stale_B1->instance_id == inst_B);
+	CHECK(stale_B1->name == "Meuse Post");
+
+	/* Under fog, replacement Waypoint D is built at the EXACT SAME tile_B,
+	 * reusing StationID 1, SAME owner CompanyID 0, and SAME kind RailWaypoint */
+	REQUIRE(Waypoint::CanAllocateItem());
+	Waypoint *wp_D = Waypoint::CreateAtIndex(id_B, tile_B);
+	REQUIRE(wp_D != nullptr);
+	wp_D->name = "New Meuse Post";
+	wp_D->owner = CompanyID{0};
+	wp_D->facilities = {StationFacility::Waypoint};
+	MakeStation(tile_B, CompanyID{0}, wp_D->index, StationType::RailWaypoint, 0);
+	wp_D->spread = TileArea(tile_B, 1, 1);
+	wp_D->UpdateVirtCoord();
+
+	uint32_t inst_D = wp_D->instance_id;
+	CHECK(inst_D > inst_B);
+
+	/* Side 1 now scouts tile_B! */
+	MilitaryFog::RefreshStationarySnapshot(side1, tile_B);
+	const StationSnapshot *snap_D1 = MilitaryFog::GetStationSnapshotAtTile(side1, tile_B);
+	REQUIRE(snap_D1 != nullptr);
+
+	/* Must allocate a NEW distinct handle for replacement D and NOT overwrite old B */
+	CHECK(snap_D1->instance_id == inst_D);
+	CHECK(snap_D1->name == "New Meuse Post");
+	CHECK(snap_D1->handle != handle_B);
+	CHECK(snap_D1->handle > handle_B);
+
+	/* Old snapshot handle_B was detached and exists = false, but its record was not clobbered with D */
+	const StationSnapshot *old_snap_B = MilitaryFog::GetStationSnapshotByHandle(side1, handle_B);
+	REQUIRE(old_snap_B != nullptr);
+	CHECK(old_snap_B->instance_id == inst_B);
+	CHECK(old_snap_B->name == "Meuse Post");
+	CHECK_FALSE(old_snap_B->exists);
+
+	/* --- PART C: Multi-tile station partial replacement retaining unobserved tiles under fog --- */
+	TileIndex tile_E1 = TileXY(30, 30);
+	TileIndex tile_E2 = TileXY(31, 30);
+
+	REQUIRE(Station::CanAllocateItem());
+	Station *st_E = Station::CreateAtIndex(StationID{2}, tile_E1);
+	REQUIRE(st_E != nullptr);
+	st_E->name = "Sedan Hub";
+	st_E->owner = CompanyID{1};
+	st_E->facilities = {StationFacility::Train};
+	MakeRailStation(tile_E1, CompanyID{1}, st_E->index, Axis::X, 0, RAILTYPE_BEGIN);
+	MakeRailStation(tile_E2, CompanyID{1}, st_E->index, Axis::X, 0, RAILTYPE_BEGIN);
+	st_E->spread = TileArea(tile_E1, 2, 1);
+	st_E->train_station = TileArea(tile_E1, 2, 1);
+	st_E->UpdateVirtCoord();
+
+	uint32_t inst_E = st_E->instance_id;
+
+	/* Side 0 scouts both tiles E1 and E2 */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_E1);
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_E2);
+
+	const StationSnapshot *snap_E0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_E1);
+	REQUIRE(snap_E0 != nullptr);
+	uint32_t handle_E = snap_E0->handle;
+	CHECK(snap_E0->instance_id == inst_E);
+	CHECK(snap_E0->observed_tiles.size() == 2);
+
+	/* Under fog, tile_E1 is demolished and replaced by Station F */
+	MakeClear(tile_E1, ClearGround::Grass, 0);
+
+	REQUIRE(Station::CanAllocateItem());
+	Station *st_F = Station::CreateAtIndex(StationID{3}, tile_E1);
+	REQUIRE(st_F != nullptr);
+	st_F->name = "Sedan Depot";
+	st_F->owner = CompanyID{0};
+	st_F->facilities = {StationFacility::Train};
+	MakeRailStation(tile_E1, CompanyID{0}, st_F->index, Axis::X, 0, RAILTYPE_BEGIN);
+	st_F->spread = TileArea(tile_E1, 1, 1);
+	st_F->train_station = TileArea(tile_E1, 1, 1);
+	st_F->UpdateVirtCoord();
+
+	uint32_t inst_F = st_F->instance_id;
+
+	/* Side 0 scouts tile_E1 where Station F now sits */
+	MilitaryFog::RefreshStationarySnapshot(side0, tile_E1);
+
+	/* Station F is discovered at tile_E1 with distinct handle */
+	const StationSnapshot *snap_F0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_E1);
+	REQUIRE(snap_F0 != nullptr);
+	CHECK(snap_F0->instance_id == inst_F);
+	CHECK(snap_F0->name == "Sedan Depot");
+	CHECK(snap_F0->handle != handle_E);
+
+	/* Station E still has tile_E2 under fog -> snapshot MUST retain exists = true */
+	const StationSnapshot *snap_E_retained = MilitaryFog::GetStationSnapshotByHandle(side0, handle_E);
+	REQUIRE(snap_E_retained != nullptr);
+	CHECK(snap_E_retained->exists);
+	CHECK(snap_E_retained->instance_id == inst_E);
+	CHECK(snap_E_retained->name == "Sedan Hub");
+	CHECK(snap_E_retained->observed_tiles.size() == 1);
+	CHECK(snap_E_retained->observed_tiles[0] == tile_E2);
+
+	/* Clean up */
+	MakeClear(tile_A1, ClearGround::Grass, 0);
+	MakeClear(tile_A2, ClearGround::Grass, 0);
+	delete st_A;
+	MakeClear(tile_B, ClearGround::Grass, 0);
+	delete wp_D;
+	MakeClear(tile_E1, ClearGround::Grass, 0);
+	MakeClear(tile_E2, ClearGround::Grass, 0);
+	delete st_E;
+	delete st_F;
 
 	ResetFogTestEnvironment();
 }

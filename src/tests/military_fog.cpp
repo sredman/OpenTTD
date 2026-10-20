@@ -2883,6 +2883,17 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	CHECK(stale_B1->colour == Colours::DarkBlue);
 	CHECK(stale_B1->GetDisplayColour() == Colours::Grey);
 
+	/* 3. Unobserved station allocated instance 3, then deleted before saving (neither in live pool nor in any observer snapshots) */
+	REQUIRE(Waypoint::CanAllocateItem());
+	Waypoint *wp_unobs = Waypoint::CreateAtIndex(StationID{2}, tile_dummy);
+	REQUIRE(wp_unobs != nullptr);
+	wp_unobs->owner = CompanyID{0};
+	CHECK(wp_unobs->instance_id == 3);
+	CHECK(_next_station_instance_id == 3);
+	MakeClear(tile_dummy, ClearGround::Grass, 0);
+	delete wp_unobs;
+	wp_unobs = nullptr;
+
 	/* Save state before continuation */
 	SaveLoadResult save_res = SaveOrLoad("test_station_labels_continuation.sav", SaveLoadOperation::Save, DetailedFileType::GameFile, Subdirectory::None, false);
 	REQUIRE(save_res == SaveLoadResult::Ok);
@@ -2975,9 +2986,10 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	Colours unint_step3_col_C0      = unint_step3_C0->colour;
 	Colours unint_step3_disp_C0     = unint_step3_C0->GetDisplayColour();
 
-	CHECK(st_C->instance_id == 3);
+	CHECK(_next_station_instance_id == 4);
+	CHECK(st_C->instance_id == 4);
 	CHECK(unint_step3_h_C0 == 3);
-	CHECK(unint_step3_C0->instance_id == 3);
+	CHECK(unint_step3_C0->instance_id == 4);
 	CHECK(unint_step3_C0->original_id == id_B);
 	CHECK(unint_step3_mini_C0 == "Sedan Junction");
 	CHECK(unint_step3_C0->facilities.Test(StationFacility::Dock));
@@ -3017,7 +3029,8 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 
 	REQUIRE(MilitaryFog::IsActive());
 
-	/* Assert next_station_handle counters post-load */
+	/* Assert next_station_handle counters and restored high-water allocator post-load */
+	CHECK(_next_station_instance_id == 3);
 	CHECK(MilitaryFog::GetSideIntelligence(side0).next_station_handle == 3);
 	CHECK(MilitaryFog::GetSideIntelligence(side1).next_station_handle == 3);
 
@@ -3127,7 +3140,8 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	loaded_st_C->train_station = TileArea(tile_C, 1, 1);
 	loaded_st_C->UpdateVirtCoord();
 
-	CHECK(loaded_st_C->instance_id == 3);
+	CHECK(_next_station_instance_id == 4);
+	CHECK(loaded_st_C->instance_id == 4);
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_C);
 	const StationSnapshot *loaded_step3_C0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_C);
 	REQUIRE(loaded_step3_C0 != nullptr);
@@ -3137,7 +3151,7 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	CHECK(loaded_step3_C0->sign.width_small  == unint_step3_w_small_C0);
 	CHECK(loaded_step3_C0->handle == unint_step3_h_C0);
 	CHECK(loaded_step3_C0->handle == 3);
-	CHECK(loaded_step3_C0->instance_id == 3);
+	CHECK(loaded_step3_C0->instance_id == 4);
 	CHECK(loaded_step3_C0->original_id == id_B);
 	CHECK(loaded_step3_C0->colour == unint_step3_col_C0);
 	CHECK(loaded_step3_C0->GetDisplayColour() == unint_step3_disp_C0);
@@ -3193,6 +3207,19 @@ TEST_CASE("MilitaryFog - Station and waypoint viewport labels lifecycle, persist
 	MakeClear(tile_C, ClearGround::Grass, 0);
 	delete loaded_st_C;
 
+	/* Verify production new-world lifecycle resets station instance allocator independently of test helpers */
+	CHECK(_next_station_instance_id > 0);
+	InitializeGame(64, 64, true, true);
+	CHECK(_next_station_instance_id == 0);
+	REQUIRE(Station::CanAllocateItem());
+	Station *brand_new_st = Station::CreateAtIndex(StationID{0}, TileXY(10, 10));
+	REQUIRE(brand_new_st != nullptr);
+	brand_new_st->owner = CompanyID{0};
+	CHECK(brand_new_st->instance_id == 1);
+	CHECK(_next_station_instance_id == 1);
+	MakeClear(TileXY(10, 10), ClearGround::Grass, 0);
+	delete brand_new_st;
+
 	ResetFogTestEnvironment();
 }
 
@@ -3222,7 +3249,7 @@ TEST_CASE("Military fog - Station instance identity lifecycle and disjoint compo
 
 	/* --- PART A: Disjoint component discovery joins existing record --- */
 	TileIndex tile_A1 = TileXY(10, 10);
-	TileIndex tile_A2 = TileXY(14, 10); // Disjoint component of Station A
+	TileIndex tile_A2 = TileXY(14, 10); // Disjoint component of Station A added later under fog
 
 	REQUIRE(Station::CanAllocateItem());
 	Station *st_A = Station::CreateAtIndex(StationID{0}, tile_A1);
@@ -3231,9 +3258,8 @@ TEST_CASE("Military fog - Station instance identity lifecycle and disjoint compo
 	st_A->owner = CompanyID{0};
 	st_A->facilities = {StationFacility::Train, StationFacility::Dock};
 	MakeRailStation(tile_A1, CompanyID{0}, st_A->index, Axis::X, 0, RAILTYPE_BEGIN);
-	MakeRailStation(tile_A2, CompanyID{0}, st_A->index, Axis::X, 0, RAILTYPE_BEGIN);
-	st_A->spread = TileArea(tile_A1, 5, 1);
-	st_A->train_station = TileArea(tile_A1, 5, 1);
+	st_A->spread = TileArea(tile_A1, 1, 1);
+	st_A->train_station = TileArea(tile_A1, 1, 1);
 	st_A->UpdateVirtCoord();
 
 	/* Assign instance ID */
@@ -3251,9 +3277,21 @@ TEST_CASE("Military fog - Station instance identity lifecycle and disjoint compo
 	uint32_t handle_A = snap_A0->handle;
 	CHECK(handle_A == 1);
 	CHECK(snap_A0->instance_id == inst_A);
+	CHECK(snap_A0->observed_tiles.size() == 1);
+	CHECK(snap_A0->observed_tiles[0] == tile_A1);
 	CHECK(MilitaryFog::GetSideIntelligence(side0).next_station_handle == 2);
 
-	/* Side 0 scouts disjoint component tile_A2 of the same living station */
+	/* Disjoint component tile_A2 is added under fog (unobserved by Side 0) */
+	MakeRailStation(tile_A2, CompanyID{0}, st_A->index, Axis::X, 0, RAILTYPE_BEGIN);
+	st_A->spread = TileArea(tile_A1, 5, 1);
+	st_A->train_station = TileArea(tile_A1, 5, 1);
+	st_A->UpdateVirtCoord();
+
+	/* Before scouting, Side 0 does NOT know about tile_A2 */
+	CHECK(MilitaryFog::GetStationSnapshotAtTile(side0, tile_A2) == nullptr);
+	CHECK(MilitaryFog::GetSideIntelligence(side0).tile_to_station_handle[tile_A2.base()] == 0);
+
+	/* Side 0 scouts genuinely new disjoint component tile_A2 of the same living station */
 	MilitaryFog::RefreshStationarySnapshot(side0, tile_A2);
 	const StationSnapshot *snap_A2_0 = MilitaryFog::GetStationSnapshotAtTile(side0, tile_A2);
 	REQUIRE(snap_A2_0 != nullptr);
@@ -3261,8 +3299,9 @@ TEST_CASE("Military fog - Station instance identity lifecycle and disjoint compo
 	CHECK(snap_A2_0->handle == handle_A);
 	CHECK(snap_A2_0->instance_id == inst_A);
 	CHECK(MilitaryFog::GetSideIntelligence(side0).next_station_handle == 2);
-	CHECK(std::find(snap_A2_0->observed_tiles.begin(), snap_A2_0->observed_tiles.end(), tile_A1) != snap_A2_0->observed_tiles.end());
-	CHECK(std::find(snap_A2_0->observed_tiles.begin(), snap_A2_0->observed_tiles.end(), tile_A2) != snap_A2_0->observed_tiles.end());
+	CHECK(snap_A2_0->observed_tiles.size() == 2);
+	CHECK(snap_A2_0->observed_tiles[0] == tile_A1);
+	CHECK(snap_A2_0->observed_tiles[1] == tile_A2);
 
 	/* Lookup helper by instance ID */
 	CHECK(MilitaryFog::GetStationSnapshotByInstance(side0, inst_A) == snap_A2_0);

@@ -338,7 +338,7 @@ void MilitaryFog::Reset()
 
 void MilitaryFog::ResetStationInstanceCounter()
 {
-	_next_station_instance_id = 0;
+	InitializeStations();
 }
 
 uint8_t MilitaryFog::GetCompanyIntelligenceSide(CompanyID company)

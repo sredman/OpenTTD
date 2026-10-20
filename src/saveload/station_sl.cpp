@@ -10,6 +10,8 @@
 #include "../stdafx.h"
 
 #include "saveload.h"
+#include "saveload_internal.h"
+#include "saveload_error.hpp"
 #include "compat/station_sl_compat.h"
 
 #include "../station_base.h"
@@ -749,7 +751,6 @@ struct STNNChunkHandler : ChunkHandler {
 
 	void Load() const override
 	{
-		_next_station_instance_id = 0;
 		const std::vector<SaveLoad> slt = SlCompatTableHeader(_station_desc, _station_sl_compat);
 
 		_old_num_flows = 0;
@@ -810,13 +811,40 @@ struct ROADChunkHandler : ChunkHandler {
 	}
 };
 
+static const SaveLoad _station_instance_desc[] = {
+	SaveLoad::Variable<VarFileType::U32>("next_instance_id", SLE_GLOBAL_ADDRESS(_next_station_instance_id)),
+};
+
+static const SaveLoadCompatTable _station_instance_sl_compat = {};
+
+struct STINChunkHandler : ChunkHandler {
+	STINChunkHandler() : ChunkHandler("STIN", ChunkType::Table) {}
+
+	void Save() const override
+	{
+		SlTableHeader(_station_instance_desc);
+		SlSetArrayIndex(0);
+		SlGlobList(_station_instance_desc);
+	}
+
+	void Load() const override
+	{
+		const std::vector<SaveLoad> slt = SlCompatTableHeader(_station_instance_desc, _station_instance_sl_compat);
+		if (SlIterateArray() == -1) return;
+		SlGlobList(slt);
+		if (SlIterateArray() != -1) SlErrorCorrupt("Too many STIN entries");
+	}
+};
+
 static const STNSChunkHandler STNS;
 static const STNNChunkHandler STNN;
 static const ROADChunkHandler ROAD;
+static const STINChunkHandler STIN;
 static const ChunkHandlerRef station_chunk_handlers[] = {
 	STNS,
 	STNN,
 	ROAD,
+	STIN,
 };
 
 extern const ChunkHandlerTable _station_chunk_handlers(station_chunk_handlers);

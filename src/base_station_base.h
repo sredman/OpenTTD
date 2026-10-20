@@ -32,6 +32,7 @@ struct RoadStopTileData {
 };
 
 extern uint32_t _next_station_instance_id;
+void InitializeStations();
 
 /** Base class for all station-ish types */
 struct BaseStation : StationPool::PoolItem<&_station_pool> {
